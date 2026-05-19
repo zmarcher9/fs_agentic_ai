@@ -7,7 +7,7 @@ from langchain_core.tools import BaseTool
 from app.agent.memory import get_conversation_memory
 from app.agent.prompts import get_agent_prompt
 from app.config import Settings, get_settings
-from app.tools.coordinate_translator import translate_coordinates_tool
+from app.tools.coordinate_translator import coordinate_translator
 from app.tools.parameter_builder import build_parameters_tool
 from app.tools.parse_results import parse_results_tool
 from app.tools.run_simulation import run_simulation_tool
@@ -20,7 +20,7 @@ def create_llm(settings: Settings) -> BaseChatModel:
 
 def get_tools() -> list[BaseTool]:
     """Return all LangChain tools available to the agent."""
-    pass  # TODO: return [translate_coordinates_tool, build_parameters_tool, run_simulation_tool, parse_results_tool]
+    pass  # TODO: return [coordinate_translator, build_parameters_tool, run_simulation_tool, parse_results_tool]
 
 
 def create_agent_executor(settings: Settings | None = None) -> AgentExecutor:

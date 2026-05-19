@@ -14,7 +14,7 @@ def build_parameters_tool(
 
     Args:
         user_intent_json: Extracted scenario fields (wind, fuel, ignition, duration, etc.).
-        coordinates_json: Output from translate_coordinates_tool.
+        coordinates_json: Output from coordinate_translator.
 
     Returns:
         JSON string matching SimulationInput schema ready for run_simulation_tool.

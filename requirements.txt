@@ -9,3 +9,5 @@ pydantic-settings
 python-dotenv
 pytest
 httpx
+geopy
+shapely
