@@ -1,78 +1,77 @@
 """Pydantic models for FireMapSim simulation input parameters and output results."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, Field, field_validator
-
-
-class Coordinate(BaseModel):
-    """A single WGS84 geographic point."""
-
-    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude in degrees")
-    lon: float = Field(..., ge=-180.0, le=180.0, description="Longitude in degrees")
+from pydantic import BaseModel, Field, model_validator
 
 
-class ProjectAreaInput(BaseModel):
-    """Bounding box for the simulation domain, defined by four corner points."""
+class Segment(BaseModel):
+    """A single polyline segment in grid coordinates."""
 
-    corners: list[Coordinate] = Field(
-        ...,
-        description="Four corners of the project area (typically SW, SE, NE, NW order)",
-    )
-
-    @field_validator("corners")
-    @classmethod
-    def corners_must_be_four(cls, corners: list[Coordinate]) -> list[Coordinate]:
-        if len(corners) != 4:
-            raise ValueError("corners must contain exactly 4 coordinates")
-        return corners
+    start_x: int
+    end_x: int
+    start_y: int
+    end_y: int
+    speed: float = 0.6
+    mode: str = "continuous_dynamic"
+    distance: None = None
 
 
-class IgnitionLineInput(BaseModel):
-    """Ordered polyline defining where fire is ignited along a line."""
+class TeamInfo(BaseModel):
+    """One ignition line composed of grid-coordinate segments."""
 
-    points: list[Coordinate] = Field(
-        ...,
-        description="Vertices of the ignition line, in draw order",
-    )
+    team_name: str
+    info_num: int
+    details: list[Segment]
 
-    @field_validator("points")
-    @classmethod
-    def points_must_have_at_least_two(cls, points: list[Coordinate]) -> list[Coordinate]:
-        if len(points) < 2:
-            raise ValueError("points must contain at least 2 coordinates")
-        return points
+    @model_validator(mode="after")
+    def info_num_matches_details(self) -> Self:
+        if self.info_num != len(self.details):
+            raise ValueError("info_num must equal len(details)")
+        return self
 
 
-class FuelBreakInput(BaseModel):
-    """Ordered polyline representing a fuel break barrier path."""
+class SupLine(BaseModel):
+    """A fuel break segment in grid coordinates."""
 
-    points: list[Coordinate] = Field(
-        ...,
-        description="Vertices of the fuel break path, in draw order",
-    )
-
-    @field_validator("points")
-    @classmethod
-    def points_must_have_at_least_two(cls, points: list[Coordinate]) -> list[Coordinate]:
-        if len(points) < 2:
-            raise ValueError("points must contain at least 2 coordinates")
-        return points
+    type: str = "supLine"
+    start_x: int
+    start_y: int
+    end_x: int
+    end_y: int
 
 
 class SimulationConfig(BaseModel):
-    """Top-level FireMapSim input composing project area, ignitions, and fuel breaks."""
+    """Top-level FireMapSim project file schema."""
 
-    project_area: ProjectAreaInput = Field(..., description="Simulation domain bounding box")
-    ignition_lines: list[IgnitionLineInput] = Field(
-        default_factory=list,
-        description="One or more ignition polylines",
-    )
-    fuel_breaks: list[FuelBreakInput] = Field(
-        default_factory=list,
-        description="Fuel break paths that modify spread behavior",
-    )
+    name: str = ""
+    info_type: str = "simulation"
+    team_num: int
+    total_sim_time: int = 12000
+    team_infos: list[TeamInfo]
+    windSpeed: float
+    windDegree: float
+    sup_infos: list[SupLine] = Field(default_factory=list)
+    proj_center_lng: float
+    proj_center_lat: float
+    fuel_data_adjusted: list[Any] = Field(default_factory=list)
+    customizedFuelGrid: str = ""
+    slope_data_adjusted: list[Any] = Field(default_factory=list)
+    aspect_data_adjusted: list[Any] = Field(default_factory=list)
+    cellResolution: int = 30
+    cellSpaceDimension: int = 200
+    cellSpaceDimensionLat: int = 200
+    customized_cell_state: list[Any] = Field(default_factory=list)
+    sup_num: int
+
+    @model_validator(mode="after")
+    def counts_match_lists(self) -> Self:
+        if self.team_num != len(self.team_infos):
+            raise ValueError("team_num must equal len(team_infos)")
+        if self.sup_num != len(self.sup_infos):
+            raise ValueError("sup_num must equal len(sup_infos)")
+        return self
 
 
 class SimulationResult(BaseModel):
@@ -84,18 +83,6 @@ class SimulationResult(BaseModel):
         default=None,
         description="Raw or structured simulator output when available",
     )
-
-
-class SimulationInput(BaseModel):
-    """Validated parameters passed to FireMapSim for a single run."""
-
-    latitude: float = Field(..., description="Ignition or domain center latitude")
-    longitude: float = Field(..., description="Ignition or domain center longitude")
-    wind_speed_kmh: float | None = Field(default=None, description="Wind speed in km/h")
-    wind_direction_deg: float | None = Field(default=None, description="Wind direction in degrees")
-    fuel_model: str | None = Field(default=None, description="Fuel model identifier")
-    simulation_hours: float = Field(default=24.0, description="Simulation duration in hours")
-    extra_params: dict[str, Any] = Field(default_factory=dict, description="Additional sim-specific fields")
 
 
 class SimulationOutput(BaseModel):

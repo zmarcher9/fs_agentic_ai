@@ -2,7 +2,7 @@
 
 from langchain_core.tools import tool
 
-from app.firesim.schemas import SimulationInput
+from app.firesim.schemas import SimulationConfig
 
 
 @tool
@@ -10,18 +10,18 @@ def build_parameters_tool(
     user_intent_json: str,
     coordinates_json: str,
 ) -> str:
-    """Merge user intent and coordinates into a complete SimulationInput JSON.
+    """Merge user intent and coordinates into a complete SimulationConfig JSON.
 
     Args:
         user_intent_json: Extracted scenario fields (wind, fuel, ignition, duration, etc.).
         coordinates_json: Output from coordinate_translator.
 
     Returns:
-        JSON string matching SimulationInput schema ready for run_simulation_tool.
+        JSON string matching SimulationConfig schema ready for run_simulation_tool.
     """
-    pass  # TODO: merge dicts; validate SimulationInput; return model_dump_json()
+    pass  # TODO: merge dicts; validate SimulationConfig; return model_dump_json()
 
 
-def build_parameters(user_intent: dict, coordinates: dict) -> SimulationInput:
+def build_parameters(user_intent: dict, coordinates: dict) -> SimulationConfig:
     """Construct validated simulation input (non-tool entry for tests)."""
-    pass  # TODO: SimulationInput(**merged fields)
+    pass  # TODO: SimulationConfig(**merged fields)
