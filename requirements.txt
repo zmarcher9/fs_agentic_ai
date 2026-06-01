@@ -11,3 +11,4 @@ pytest
 httpx
 geopy
 shapely
+pyproj
