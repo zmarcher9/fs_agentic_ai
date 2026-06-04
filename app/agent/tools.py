@@ -64,30 +64,9 @@ _UI_STEPS: dict[str, str] = {
 
 @tool
 def geocode_and_configure(location: str, acres: float) -> str:
-    """Geocode a location and derive FireMapSim grid settings for the given acreage.
-
-    Args:
-        location: Plain address or place name (e.g. "north pasture near Athens, GA").
-        acres: Approximate burn area in acres (must be positive).
-
-    Returns:
-        JSON string with location, center coordinates, acreage, side length in meters,
-        grid settings, and default wind/simulation values ready to apply.
-    """
-    center_lat, center_lon = geocode_location(location)
-    bounds = acres_to_sim_bounds(center_lat, center_lon, acres)
-    result = {
-        "location": location.strip(),
-        "proj_center_lat": bounds["center_lat"],
-        "proj_center_lng": bounds["center_lon"],
-        "acres": bounds["acres"],
-        "side_m": bounds["side_m"],
-        "cellResolution": bounds["cellResolution"],
-        "cellSpaceDimension": bounds["cellSpaceDimension"],
-        "windSpeed": 10,
-        "windDegree": 0,
-        "total_sim_time": 12000,
-    }
+    """Geocode a place name and compute recommended FireMapSim grid settings for the given acreage."""
+    lat, lon = geocode_location(location)
+    result = acres_to_sim_bounds(lat, lon, acres)
     return json.dumps(result)
 
 
@@ -101,42 +80,18 @@ def build_project_config(
     wind_degree: int,
     total_sim_time: int,
 ) -> str:
-    """Build a validated FireMapSim JSON config from explicit parameters.
-
-    Args:
-        center_lat: Project center latitude in WGS84 decimal degrees.
-        center_lon: Project center longitude in WGS84 decimal degrees.
-        cell_resolution: Meters per cell (2, 3, 5, 10, 15, or 30).
-        cell_space_dimension: Cells per side (50, 100, 150, or 200).
-        wind_speed: Wind speed in km/h (0–100).
-        wind_degree: Wind direction in degrees (0–360; 0=North, 90=East).
-        total_sim_time: Simulation duration in seconds (typically 6000–30000).
-
-    Returns:
-        JSON string ready to apply in FireMapSim.
-
-    Raises:
-        ValueError: If any parameter is outside its allowed range.
-    """
+    """Validate parameters and return a FireMapSim-ready JSON config object."""
     if cell_resolution not in VALID_CELL_RESOLUTIONS:
-        raise ValueError(
-            f"cell_resolution must be one of {VALID_CELL_RESOLUTIONS}, got {cell_resolution}"
-        )
+        raise ValueError(f"cell_resolution must be one of {VALID_CELL_RESOLUTIONS}")
     if cell_space_dimension not in VALID_CELL_SPACE_DIMENSIONS:
-        raise ValueError(
-            f"cell_space_dimension must be one of {VALID_CELL_SPACE_DIMENSIONS}, "
-            f"got {cell_space_dimension}"
-        )
+        raise ValueError(f"cell_space_dimension must be one of {VALID_CELL_SPACE_DIMENSIONS}")
     if not 0 <= wind_speed <= 100:
-        raise ValueError(f"wind_speed must be between 0 and 100 km/h, got {wind_speed}")
+        raise ValueError("wind_speed must be between 0 and 100")
     if not 0 <= wind_degree <= 360:
-        raise ValueError(f"wind_degree must be between 0 and 360, got {wind_degree}")
+        raise ValueError("wind_degree must be between 0 and 360")
     if not 6000 <= total_sim_time <= 30000:
-        raise ValueError(
-            f"total_sim_time must be between 6000 and 30000 seconds, got {total_sim_time}"
-        )
-
-    config = {
+        raise ValueError("total_sim_time must be between 6000 and 30000 seconds")
+    return json.dumps({
         "proj_center_lat": center_lat,
         "proj_center_lng": center_lon,
         "cellResolution": cell_resolution,
@@ -144,28 +99,15 @@ def build_project_config(
         "windSpeed": wind_speed,
         "windDegree": wind_degree,
         "total_sim_time": total_sim_time,
-    }
-    return json.dumps(config)
+    })
 
 
 @tool
 def explain_ui_step(step: str) -> str:
-    """Explain how to perform a FireMapSim UI step in plain English.
-
-    Args:
-        step: Step name such as set_project_location, set_line_ignition,
-            set_fuel_brake, start_simulation, or apply_config.
-
-    Returns:
-        JSON string with the step name and plain-English instructions.
-    """
-    key = step.strip().lower()
-    explanation = _UI_STEPS.get(key)
-    if explanation is None:
-        valid = ", ".join(sorted(_UI_STEPS))
-        raise ValueError(f"Unknown step '{step}'. Valid steps: {valid}")
-
-    return json.dumps({"step": key, "explanation": explanation})
+    """Return plain-English instructions for a FireMapSim UI step by name."""
+    if step in _UI_STEPS:
+        return _UI_STEPS[step]
+    return json.dumps({"error": "Unknown step", "available_steps": list(_UI_STEPS.keys())})
 
 
 TOOLS = [geocode_and_configure, build_project_config, explain_ui_step]

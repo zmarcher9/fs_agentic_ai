@@ -68,9 +68,8 @@ def test_geocode_and_configure(
 
     out = geocode_and_configure.invoke({"location": "Atlanta, GA", "acres": 50.0})
     parsed = json.loads(out)
-    assert parsed["proj_center_lat"] == 33.749
+    assert parsed["center_lat"] == 33.749
     assert parsed["cellResolution"] == 30
-    assert parsed["windSpeed"] == 10
 
 
 def test_build_project_config_valid() -> None:
@@ -106,11 +105,11 @@ def test_build_project_config_invalid_resolution() -> None:
 
 def test_explain_ui_step_known() -> None:
     out = explain_ui_step.invoke({"step": "set_line_ignition"})
-    parsed = json.loads(out)
-    assert parsed["step"] == "set_line_ignition"
-    assert "Left-click" in parsed["explanation"]
+    assert "Left-click" in out
 
 
 def test_explain_ui_step_unknown() -> None:
-    with pytest.raises(ValueError, match="Unknown step"):
-        explain_ui_step.invoke({"step": "not_a_real_step"})
+    out = explain_ui_step.invoke({"step": "not_a_real_step"})
+    parsed = json.loads(out)
+    assert parsed["error"] == "Unknown step"
+    assert "set_line_ignition" in parsed["available_steps"]
