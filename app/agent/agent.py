@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 from app.agent.memory import get_memory
 from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
 from app.config import Settings, get_settings
-from app.tools.coordinate_translator import coordinate_translator
+from app.agent.tools import TOOLS
 
 
 def create_llm(settings: Settings) -> ChatAnthropic:
@@ -24,8 +24,8 @@ def create_llm(settings: Settings) -> ChatAnthropic:
 
 
 def get_tools() -> list[BaseTool]:
-    """Return agent tools (coordinate translation for current scaffold)."""
-    return [coordinate_translator]
+    """Return agent tools for geocoding, config building, and UI guidance."""
+    return list(TOOLS)
 
 
 def create_agent_executor(settings: Settings | None = None) -> AgentExecutor:

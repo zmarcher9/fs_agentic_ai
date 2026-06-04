@@ -14,7 +14,7 @@ def build_parameters_tool(
 
     Args:
         user_intent_json: Extracted scenario fields (wind, fuel, ignition, duration, etc.).
-        coordinates_json: Output from coordinate_translator.
+        coordinates_json: Output from geocode_and_configure or build_project_config.
 
     Returns:
         JSON string matching SimulationConfig schema ready for run_simulation_tool.

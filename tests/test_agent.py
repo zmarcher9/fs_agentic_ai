@@ -14,7 +14,7 @@ def mock_settings() -> Settings:
 
 def test_get_tools_returns_expected_tools() -> None:
     """Agent should expose coordinate, parameter, run, and parse tools."""
-    pass  # TODO: tools = get_tools(); assert len(tools) == 4
+    pass  # TODO: tools = get_tools(); assert len(tools) == 3
 
 
 def test_create_llm_respects_provider(mock_settings: Settings) -> None:
