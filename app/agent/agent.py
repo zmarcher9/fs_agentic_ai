@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool
 
 from app.agent.memory import get_memory
-from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
 from app.config import Settings, get_settings
 from app.tools.coordinate_translator import coordinate_translator
 
@@ -36,7 +36,7 @@ def create_agent_executor(settings: Settings | None = None) -> AgentExecutor:
 
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", SYSTEM_PROMPT),
+            ("system", FIRESIM_SYSTEM_PROMPT),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
