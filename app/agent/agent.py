@@ -1,63 +1,59 @@
-"""Core LangChain agent setup, tool binding, and executor for simulation workflows."""
+"""LangGraph ReAct agent wiring for the FireMapSim setup co-pilot."""
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_anthropic import ChatAnthropic
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.tools import BaseTool
+import os
 
-from app.agent.memory import get_memory
+from dotenv import load_dotenv
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent
+
 from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
-from app.config import Settings, get_settings
 from app.agent.tools import TOOLS
 
+load_dotenv()
 
-def create_llm(settings: Settings) -> ChatAnthropic:
-    """Create the Anthropic chat model used by the FireMapSim agent."""
-    if not settings.anthropic_api_key:
-        raise ValueError(
-            "ANTHROPIC_API_KEY is not set. Add it to your environment or .env file."
+_llm = ChatOpenAI(
+    model="anthropic/claude-sonnet-4-20250514",
+    openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+    openai_api_base="https://openrouter.ai/api/v1",
+).bind_tools(TOOLS)
+
+_agent = create_react_agent(
+    model=_llm,
+    tools=TOOLS,
+    checkpointer=MemorySaver(),
+    prompt=FIRESIM_SYSTEM_PROMPT,
+)
+
+
+def _content_to_text(content: str | list) -> str:
+    if isinstance(content, str):
+        return content
+    if content:
+        block = content[0]
+        if isinstance(block, dict):
+            return str(block.get("text", block))
+        return str(block)
+    return ""
+
+
+def run_agent(user_message: str, thread_id: str = "default") -> str:
+    """Run the FireMapSim co-pilot agent and return the assistant reply text."""
+    result = _agent.invoke(
+        {"messages": [HumanMessage(content=user_message)]},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    for message in reversed(result["messages"]):
+        if isinstance(message, AIMessage):
+            return _content_to_text(message.content)
+    raise ValueError("Agent did not return an AIMessage")
+
+
+if __name__ == "__main__":
+    print(
+        run_agent(
+            "I want to do a prescribed burn near Canton, GA, about 200 acres, "
+            "wind from the southwest at 15 km/h"
         )
-    return ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        anthropic_api_key=settings.anthropic_api_key,
     )
-
-
-def get_tools() -> list[BaseTool]:
-    """Return agent tools for geocoding, config building, and UI guidance."""
-    return list(TOOLS)
-
-
-def create_agent_executor(settings: Settings | None = None) -> AgentExecutor:
-    """Build a configured AgentExecutor with prompt, tools, and memory."""
-    settings = settings or get_settings()
-    llm = create_llm(settings)
-    tools = get_tools()
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", FIRESIM_SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
-    )
-    agent = create_tool_calling_agent(llm=llm, tools=tools, prompt=prompt)
-
-    return AgentExecutor(
-        agent=agent,
-        tools=tools,
-        memory=get_memory(),
-        verbose=True,
-    )
-
-
-def get_agent() -> AgentExecutor:
-    """Return the default FireMapSim agent executor."""
-    return create_agent_executor()
-
-
-def get_agent_executor(session_id: str | None = None) -> AgentExecutor:
-    """Compatibility alias for existing imports; session_id is currently unused."""
-    _ = session_id
-    return get_agent()

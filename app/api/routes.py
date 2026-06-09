@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from app.agent.agent import get_agent_executor
+from app.agent.agent import run_agent
 from app.config import Settings, get_settings
 
 router = APIRouter(tags=["chat"])
@@ -29,7 +29,7 @@ async def chat(
     settings: Settings = Depends(get_settings),
 ) -> ChatResponse:
     """Accept a user message, run the agent, and return the assistant reply."""
-    pass  # TODO: invoke agent executor with request.message and memory keyed by session_id
+    pass  # TODO: reply = run_agent(request.message, thread_id=request.session_id or "default")
 
 
 @router.get("/chat/sessions/{session_id}")

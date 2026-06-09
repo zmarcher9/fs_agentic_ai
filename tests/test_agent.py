@@ -2,7 +2,8 @@
 
 import pytest
 
-from app.agent.agent import create_agent_executor, create_llm, get_tools
+from app.agent.agent import run_agent
+from app.agent.tools import TOOLS
 from app.config import Settings
 
 
@@ -13,15 +14,10 @@ def mock_settings() -> Settings:
 
 
 def test_get_tools_returns_expected_tools() -> None:
-    """Agent should expose coordinate, parameter, run, and parse tools."""
-    pass  # TODO: tools = get_tools(); assert len(tools) == 3
+    """Agent should expose geocode, config, and UI guidance tools."""
+    assert len(TOOLS) == 3
 
 
-def test_create_llm_respects_provider(mock_settings: Settings) -> None:
-    """LLM factory should select OpenAI or Anthropic based on settings."""
-    pass  # TODO: llm = create_llm(mock_settings); assert llm is not None
-
-
-def test_create_agent_executor_builds_without_error(mock_settings: Settings) -> None:
-    """Executor scaffolding should instantiate with mocked dependencies."""
-    pass  # TODO: executor = create_agent_executor(mock_settings); assert executor is not None
+def test_run_agent_is_callable() -> None:
+    """run_agent should be importable and callable."""
+    assert callable(run_agent)
