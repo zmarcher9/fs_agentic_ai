@@ -1,7 +1,9 @@
 """LangGraph ReAct agent wiring for the FireMapSim setup co-pilot."""
 
 import os
+from pathlib import Path
 
+import pip_system_certs.wrapt_requests  # noqa: F401 — use Windows trust store for HTTPS
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
@@ -11,13 +13,19 @@ from langgraph.prebuilt import create_react_agent
 from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
 from app.agent.tools import TOOLS
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+_openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+if not _openrouter_api_key:
+    raise ValueError(
+        "OPENROUTER_API_KEY is not set. Add it to the .env file in the project root."
+    )
 
 _llm = ChatOpenAI(
-    model="anthropic/claude-sonnet-4-20250514",
-    openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="anthropic/claude-sonnet-4",
+    openai_api_key=_openrouter_api_key,
     openai_api_base="https://openrouter.ai/api/v1",
-).bind_tools(TOOLS)
+)
 
 _agent = create_react_agent(
     model=_llm,

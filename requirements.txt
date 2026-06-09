@@ -9,6 +9,8 @@ pydantic-settings
 python-dotenv
 pytest
 httpx
+certifi
+pip-system-certs
 geopy
 shapely
 pyproj
