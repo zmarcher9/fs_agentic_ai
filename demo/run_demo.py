@@ -17,20 +17,39 @@ Requires the FastAPI server to be running:
 
 Optional: also start the Playwright guide in a second terminal:
     python playwright/guide.py
+
+Thread ID:
+    This script and playwright/guide.py share an agent conversation via the
+    FIRESIM_THREAD_ID environment variable. If it's not set, both scripts
+    fall back to the same default thread ("canton-demo-default"), so by
+    default they're already talking about the same configured scenario.
+
+    To use a fresh thread for a one-off run, set FIRESIM_THREAD_ID before
+    launching either script:
+
+        export FIRESIM_THREAD_ID=canton-demo-20260615-130800   (bash)
+        $env:FIRESIM_THREAD_ID = "canton-demo-20260615-130800" (PowerShell)
+
+    Run this script first to configure the scenario, then run
+    playwright/guide.py with the SAME FIRESIM_THREAD_ID (if you set one)
+    to walk through the UI for that configured session.
 """
 
 import json
+import os
 import time
 import textwrap
 import requests
-from datetime import datetime
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-API_URL   = "http://localhost:8000/chat"
-THREAD_ID = f"canton-demo-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+API_URL = "http://localhost:8000/chat"
+
+# Shared with playwright/guide.py via the FIRESIM_THREAD_ID env var, so both
+# scripts talk to the same agent conversation. See module docstring above.
+THREAD_ID = os.environ.get("FIRESIM_THREAD_ID", "canton-demo-default")
 
 # Width for terminal output formatting
 TERM_WIDTH = 72
@@ -199,6 +218,11 @@ def main() -> None:
     print(f"  API URL   : {API_URL}")
     print(f"  Turns     : {len(TURNS)}")
     print()
+    if "FIRESIM_THREAD_ID" not in os.environ:
+        print("  (Using default shared thread. playwright/guide.py will use")
+        print("   this same thread automatically if run without setting")
+        print("   FIRESIM_THREAD_ID either.)")
+        print()
 
     # Check the API is up before starting
     section("Health check")
@@ -243,6 +267,7 @@ def main() -> None:
     print("  Next steps:")
     print("  1. Open https://firesim.cs.gsu.edu/ in your browser.")
     print("  2. Run:  python playwright/guide.py")
+    print(f"     (it will use the same thread: {THREAD_ID})")
     print("     The guide will highlight each field as the agent narrates.")
     print()
     divider("═")
