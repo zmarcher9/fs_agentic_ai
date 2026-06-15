@@ -9,6 +9,8 @@ pydantic-settings
 python-dotenv
 pytest
 httpx
+requests
+playwright
 certifi
 pip-system-certs
 geopy
