@@ -16,11 +16,11 @@ _UI_STEPS: dict[str, str] = {
         "the map on your project location — you can skip Set Project Location afterward."
     ),
     "set_project_location": (
-        "Click Set Project Location in Cluster 1. This centers the simulation region on the "
-        "current map view. Pan and zoom the map to your burn area first, then click the button."
+        "The map has already moved to your project area. Click Set Project Location in Cluster 1 "
+        "to confirm the simulation region. This locks in the center point for the burn."
     ),
     "set_line_ignition": (
-        "Click Set Line Ignition in Cluster 1. Left-click on the map to place nodes along the "
+        "Click Set Line Ignition in Cluster 1. Left-click on the map to place points along the "
         "path where you want the fire to start. Right-click when you are done — the line appears "
         "in red."
     ),
@@ -29,7 +29,7 @@ _UI_STEPS: dict[str, str] = {
         "point. It appears as a red-orange marker."
     ),
     "set_fuel_brake": (
-        "Click Set Fuel Brake in Cluster 1. Left-click nodes to draw a path along your fuel break "
+        "Click Set Fuel Brake in Cluster 1. Left-click to draw a path along your fuel break "
         "(fire barrier). Right-click to finish — the line appears in dark blue and fire cannot "
         "cross it."
     ),
@@ -38,26 +38,25 @@ _UI_STEPS: dict[str, str] = {
         "Draw the ignition path and configure team, speed, and mode options as needed."
     ),
     "cell_resolution": (
-        "In the Config section second row, open the Cell Resolution dropdown and choose 2, 3, 5, "
-        "10, 15, or 30 meters per cell. Smaller values give finer detail but cover a smaller area."
+        "In the Config section second row, open the Cell Resolution dropdown and choose your "
+        "value. Smaller cells give finer detail but cover a smaller area overall."
     ),
     "cell_space_dimension": (
-        "In the Config section second row, open the Cell Space Dimension dropdown and choose 50, "
-        "100, 150, or 200 cells per side. Combined with cell resolution, this sets how large the "
-        "simulation area is."
+        "In the Config section second row, open the Cell Space Dimension dropdown and choose your "
+        "value. Combined with cell resolution, this sets how large the simulation area is."
     ),
     "wind_settings": (
-        "In Cluster 5, enter Simulation Duration (seconds), Wind Speed (km/h, 0–100), and Wind "
-        "Degree (0–360, where 0 is North and 90 is East)."
+        "In Cluster 5, enter the Simulation Duration in seconds, Wind Speed in km/h, and Wind "
+        "Direction in degrees — 0 is North, 90 is East, 180 is South, 270 is West."
     ),
     "start_simulation": (
         "When your project area, ignition, and settings are ready, click Start Simulation Run in "
         "Cluster 6. Use Reset Simulation if you need to clear results and run again."
     ),
     "show_results": (
-        "After a run completes, use Cluster 7: Show Simulation Result, adjust Animation Speed, "
-        "toggle Show/Hide Fire Layer, and scrub the Simulation Time slider to review spread over "
-        "time."
+        "After the run completes, use Cluster 7 to review results: click Show Simulation Result, "
+        "adjust Animation Speed, toggle Show/Hide Fire Layer, and drag the Simulation Time slider "
+        "to see how the fire spread over time."
     ),
 }
 
@@ -107,7 +106,8 @@ def explain_ui_step(step: str) -> str:
     """Return plain-English instructions for a FireMapSim UI step by name."""
     if step in _UI_STEPS:
         return _UI_STEPS[step]
-    return json.dumps({"error": "Unknown step", "available_steps": list(_UI_STEPS.keys())})
+    available = ", ".join(_UI_STEPS.keys())
+    return f"Step '{step}' not recognised. Available steps are: {available}"
 
 
 TOOLS = [geocode_and_configure, build_project_config, explain_ui_step]

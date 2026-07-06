@@ -1,29 +1,30 @@
 """
 playwright/guide.py
- 
+
 FireMapSim UI walkthrough guide.
 Launches or attaches to https://firesim.cs.gsu.edu/,
 then highlights UI fields as the agent narrates each setup step.
- 
+
 Usage:
     python playwright/guide.py
- 
+
 The script:
   1. Opens FireMapSim in a visible browser window.
-  2. Sends each demo message to the local firesim-ai API (localhost:8000/chat).
-  3. Parses the agent reply to detect which UI element to highlight.
-  4. Scrolls to + visually highlights that element on the live page.
-  5. Shows a caption box on the page with the step's instruction and
-     a "Next step" / "Quit" button.
-  6. Waits for the user to click a button on the page before continuing.
-     (No need to switch back to the terminal.)
- 
+  2. Injects a floating chat overlay so the agent is visible on-screen.
+  3. Pans the map to the project location via Mapbox GL (Vue FireMap component).
+  4. Sends each demo message to the local firesim-ai API (localhost:8000/chat).
+  5. Parses the agent reply to detect which UI element to highlight.
+  6. Scrolls to + visually highlights that element on the live page.
+  7. Shows agent responses in the floating overlay (no raw JSON ever shown).
+  8. Waits for the user to click "Next step" / "Quit" before continuing.
+
 Requires:
     pip install playwright requests
     playwright install chromium
 """
 
 import os
+import re
 import time
 import textwrap
 import requests
@@ -33,23 +34,23 @@ from playwright.sync_api import sync_playwright, Page, Locator
 # Config
 # ---------------------------------------------------------------------------
 
-FIRESIM_URL = "https://firesim.cs.gsu.edu/"
-API_URL     = "http://localhost:8000/chat"
+FIRESIM_BASE = "https://firesim.cs.gsu.edu/home"
+API_URL      = "http://localhost:8000/chat"
 
-# Shared with demo/run_demo.py via the FIRESIM_THREAD_ID env var, so both
-# scripts talk to the same agent conversation. If run_demo.py was run first,
-# set this to the same value (it prints the thread ID it used) e.g.:
-#
-#   export FIRESIM_THREAD_ID=canton-demo-20260615-130800   (bash)
-#   $env:FIRESIM_THREAD_ID = "canton-demo-20260615-130800" (PowerShell)
-#
-# If unset, falls back to a fixed default thread shared by both scripts.
 THREAD_ID = os.environ.get("FIRESIM_THREAD_ID", "canton-demo-default")
 
-# Max characters of the agent reply to show in the on-page caption.
-CAPTION_MAX_CHARS = 280
+# Canton, GA prescribed burn center coordinates
+PROJECT_LAT = 34.2367621
+PROJECT_LNG = -84.4907621
+PROJECT_ZOOM = 13  # zoom level — 13 gives a good neighbourhood view
 
-# Highlight style injected via JS.
+# Max characters shown in the overlay per agent response.
+OVERLAY_MAX_CHARS = 400
+
+# ---------------------------------------------------------------------------
+# Styles
+# ---------------------------------------------------------------------------
+
 HIGHLIGHT_CSS = """
   outline: 4px solid #ff6600 !important;
   outline-offset: 3px !important;
@@ -57,128 +58,37 @@ HIGHLIGHT_CSS = """
   transition: all 0.3s ease;
 """
 
-# CSS for the floating caption box. !important on everything so the host
-# page's stylesheet (which may use very broad/aggressive selectors) can't
-# hide, clip, or reposition it.
-CAPTION_CSS = """
-  all: initial !important;
-  position: fixed !important;
-  bottom: 24px !important;
-  left: 24px !important;
-  right: 24px !important;
-  max-width: 640px !important;
-  width: auto !important;
-  z-index: 2147483647 !important;
-  display: block !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  background: #1e1e1e !important;
-  color: #fff !important;
-  font-family: -apple-system, Segoe UI, Roboto, sans-serif !important;
-  font-size: 15px !important;
-  line-height: 1.4 !important;
-  padding: 14px 18px !important;
-  border-radius: 10px !important;
-  border-left: 5px solid #ff6600 !important;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.35) !important;
-  box-sizing: border-box !important;
-"""
-
-CAPTION_HINT_CSS = """
-  margin-top: 8px !important;
-  font-size: 12px !important;
-  color: #aaa !important;
-  display: block !important;
-"""
-
-CAPTION_BUTTON_ROW_CSS = """
-  margin-top: 12px !important;
-  display: flex !important;
-  gap: 10px !important;
-  justify-content: flex-end !important;
-"""
-
-NEXT_BUTTON_CSS = """
-  all: initial !important;
-  background: #ff6600 !important;
-  color: #1e1e1e !important;
-  border: none !important;
-  font-weight: 600 !important;
-  font-family: -apple-system, Segoe UI, Roboto, sans-serif !important;
-  font-size: 14px !important;
-  padding: 8px 18px !important;
-  border-radius: 6px !important;
-  cursor: pointer !important;
-  display: inline-block !important;
-"""
-
-QUIT_BUTTON_CSS = """
-  all: initial !important;
-  background: transparent !important;
-  color: #ccc !important;
-  border: 1px solid #555 !important;
-  font-family: -apple-system, Segoe UI, Roboto, sans-serif !important;
-  font-size: 14px !important;
-  padding: 8px 14px !important;
-  border-radius: 6px !important;
-  cursor: pointer !important;
-  display: inline-block !important;
-"""
-
 # ---------------------------------------------------------------------------
 # Selector map
-# Maps agent-detected step keywords → CSS selectors in FireMapSim's DOM.
 # ---------------------------------------------------------------------------
 
 STEP_SELECTORS: dict[str, str] = {
-    # Grid / resolution controls (top toolbar)
     "cell_resolution":      "select#cellResolution",
     "cell_dimension":       "select#cellSpaceDimension",
     "selected_area":        "span#selectedSquareArea",
-
-    # Location buttons (radio-button-style)
     "set_project_location": "label[for='sPL']",
     "go_project_location":  "label[for='gPL']",
-
-    # Ignition mode buttons
     "set_line_ignition":    "label[for='btnradio1']",
     "set_point_ignition":   "label[for='btnradio1-1']",
     "set_fuel_brake":       "label[for='btnradio2']",
-
-    # Terrain data
     "get_terrain_fuel":     "label[for='getFuel']",
     "show_fuel":            "label[for='drawFuel']",
     "show_slope":           "label[for='drawSlope']",
     "show_aspect":          "label[for='drawAspect']",
-
-    # Simulation parameters (the input-group row)
     "simulation_duration":  "input.form-control[type='number']:nth-of-type(1)",
     "wind_speed":           "input.form-control[type='number']:nth-of-type(2)",
     "wind_degree":          "input.form-control[type='number']:nth-of-type(3)",
-
-    # Simulation control
     "start_simulation":     "label[for='startRun']",
     "reset_simulation":     "label[for='btnradio10']",
     "close_project":        "button:has-text('Close Project')",
-
-    # Project persistence
     "load_sample":          "label[for='loadSample']",
     "save_project":         "label[for='saveProject']",
     "download_project":     "label[for='downloadProject']",
     "upload_project":       "label[for='uploadProject']",
-
-    # Map canvas itself
     "map":                  ".map-layer canvas",
 }
 
-
-# ---------------------------------------------------------------------------
-# Keyword → step key mapping
-# We scan the agent reply for these phrases and map them to STEP_SELECTORS.
-# ---------------------------------------------------------------------------
-
 KEYWORD_MAP: list[tuple[str, str]] = [
-    # Check for specific field names first (more specific → earlier in list)
     ("simulation duration",  "simulation_duration"),
     ("wind speed",           "wind_speed"),
     ("wind degree",          "wind_degree"),
@@ -206,9 +116,360 @@ KEYWORD_MAP: list[tuple[str, str]] = [
     ("mapbox",               "map"),
 ]
 
+# ---------------------------------------------------------------------------
+# Map panning via Mapbox GL (FireMapSim Vue component)
+# ---------------------------------------------------------------------------
+
+def firesim_url(lat: float, lng: float, zoom: int) -> str:
+    """Open the sim UI directly; query params seed the initial map center."""
+    return f"{FIRESIM_BASE}?lat={lat}&lng={lng}&zoom={zoom}"
+
+
+PAN_MAP_JS = """
+([lat, lng, zoom]) => {
+    function findFireMap(vm) {
+        if (!vm) return null;
+        if (vm.$options && vm.$options.name === 'FireMap' && vm.map) return vm;
+        const kids = vm.$children || [];
+        for (let i = 0; i < kids.length; i++) {
+            const found = findFireMap(kids[i]);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    function findMapboxOnDom() {
+        const containers = document.querySelectorAll('.mapboxgl-map');
+        for (const el of containers) {
+            const keys = Object.getOwnPropertyNames(el);
+            for (let i = 0; i < keys.length; i++) {
+                const candidate = el[keys[i]];
+                if (candidate && typeof candidate.jumpTo === 'function') {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    const root = document.querySelector('#app');
+    const fireMap = findFireMap(root && root.__vue__);
+    let map = fireMap && fireMap.map ? fireMap.map : findMapboxOnDom();
+
+    if (!map) {
+        return { success: false, reason: 'Mapbox map instance not ready' };
+    }
+
+    try {
+        if (fireMap) {
+            fireMap.cur_lat = lat;
+            fireMap.cur_long = lng;
+            fireMap.coordinates = [lng, lat];
+            fireMap.zoom = zoom;
+        }
+        // Mapbox GL uses [longitude, latitude] order.
+        map.jumpTo({ center: [lng, lat], zoom: zoom, essential: true });
+        window.dispatchEvent(new Event('resize'));
+        return { success: true, method: fireMap ? 'vue_firemap_jumpTo' : 'dom_mapbox_jumpTo' };
+    } catch (e) {
+        return { success: false, reason: String(e) };
+    }
+}
+"""
+
+
+def pan_map_to_project(
+    page: Page,
+    lat: float,
+    lng: float,
+    zoom: int,
+    *,
+    max_attempts: int = 15,
+    retry_delay: float = 1.0,
+) -> None:
+    """
+    Pan and zoom the Mapbox map via FireMapSim's Vue FireMap component.
+    Retries until the map finishes loading.
+    """
+    for attempt in range(1, max_attempts + 1):
+        result = page.evaluate(PAN_MAP_JS, [lat, lng, zoom])
+        if result.get("success"):
+            print(
+                f"  -> Map panned to ({lat}, {lng}) zoom={zoom}  "
+                f"[{result.get('method')}, attempt {attempt}]"
+            )
+            return
+        reason = result.get("reason", "unknown")
+        print(f"  ... map not ready ({attempt}/{max_attempts}): {reason}")
+        time.sleep(retry_delay)
+
+    print("  !  Map pan failed after retries — user can pan manually.")
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Floating chat overlay injected into the FireMapSim page
+# ---------------------------------------------------------------------------
+
+# The overlay HTML is injected once at startup and then updated on each step.
+# It sits in a fixed position panel on the right side of the screen so it
+# doesn't cover the map controls.
+
+OVERLAY_INIT_JS = """
+() => {
+    if (document.getElementById('__fsai_overlay__')) return;
+
+    const panel = document.createElement('div');
+    panel.id = '__fsai_overlay__';
+    panel.setAttribute('style', [
+        'all: initial',
+        'position: fixed',
+        'top: 16px',
+        'right: 16px',
+        'width: 340px',
+        'max-height: 80vh',
+        'z-index: 2147483647',
+        'display: flex',
+        'flex-direction: column',
+        'background: #1e1e1e',
+        'border-radius: 12px',
+        'border-left: 4px solid #ff6600',
+        'box-shadow: 0 8px 32px rgba(0,0,0,0.45)',
+        'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
+        'font-size: 14px',
+        'color: #fff',
+        'overflow: hidden',
+    ].join(' !important; ') + ' !important');
+
+    // Header bar
+    const header = document.createElement('div');
+    header.setAttribute('style', [
+        'all: initial',
+        'display: flex',
+        'align-items: center',
+        'gap: 8px',
+        'padding: 10px 14px',
+        'background: #2a2a2a',
+        'border-bottom: 1px solid #333',
+        'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
+        'flex-shrink: 0',
+    ].join(' !important; ') + ' !important');
+
+    const dot = document.createElement('span');
+    dot.setAttribute('style', 'all:initial !important; width:10px !important; height:10px !important; border-radius:50% !important; background:#ff6600 !important; display:inline-block !important; flex-shrink:0 !important;');
+
+    const title = document.createElement('span');
+    title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#fff !important; letter-spacing:0.3px !important;');
+    title.textContent = 'FireMapSim AI Co-pilot';
+
+    const stepBadge = document.createElement('span');
+    stepBadge.id = '__fsai_step_badge__';
+    stepBadge.setAttribute('style', 'all:initial !important; margin-left:auto !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:11px !important; color:#aaa !important;');
+    stepBadge.textContent = '';
+
+    header.appendChild(dot);
+    header.appendChild(title);
+    header.appendChild(stepBadge);
+
+    // Message area
+    const msgArea = document.createElement('div');
+    msgArea.id = '__fsai_msg_area__';
+    msgArea.setAttribute('style', [
+        'all: initial',
+        'flex: 1',
+        'overflow-y: auto',
+        'padding: 14px',
+        'display: flex',
+        'flex-direction: column',
+        'gap: 10px',
+        'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
+        'font-size: 14px',
+        'color: #e0e0e0',
+        'line-height: 1.5',
+        'min-height: 80px',
+        'max-height: 50vh',
+    ].join(' !important; ') + ' !important');
+
+    const placeholder = document.createElement('div');
+    placeholder.setAttribute('style', 'all:initial !important; color:#666 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; text-align:center !important; padding:20px 0 !important;');
+    placeholder.textContent = 'Starting guided walkthrough...';
+    msgArea.appendChild(placeholder);
+
+    // Button row
+    const btnRow = document.createElement('div');
+    btnRow.id = '__fsai_btn_row__';
+    btnRow.setAttribute('style', [
+        'all: initial',
+        'display: flex',
+        'gap: 8px',
+        'justify-content: flex-end',
+        'padding: 10px 14px',
+        'background: #2a2a2a',
+        'border-top: 1px solid #333',
+        'flex-shrink: 0',
+    ].join(' !important; ') + ' !important');
+
+    panel.appendChild(header);
+    panel.appendChild(msgArea);
+    panel.appendChild(btnRow);
+    (document.body || document.documentElement).appendChild(panel);
+
+    window.__guide_action__ = null;
+}
+"""
+
+def inject_overlay(page: Page) -> None:
+    """Inject the floating chat overlay panel into the page once."""
+    try:
+        page.evaluate(OVERLAY_INIT_JS)
+        print("  -> Floating overlay injected.")
+    except Exception as exc:
+        print(f"  !  Overlay injection failed: {exc}")
+
+
+def clean_for_display(text: str) -> str:
+    """
+    Remove any JSON code fences or raw JSON objects that slipped through
+    the system prompt instructions. Also strips markdown bold/italic markers.
+    This is a safety net — the prompt changes should prevent this.
+    """
+    # Remove ```json ... ``` blocks entirely
+    text = re.sub(r"```json[\s\S]*?```", "", text, flags=re.IGNORECASE)
+    # Remove any remaining ``` fences
+    text = re.sub(r"```[\s\S]*?```", "", text)
+    # Remove lone backticks
+    text = text.replace("`", "")
+    # Remove markdown bold/italic
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.+?)\*", r"\1", text)
+    # Collapse extra blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def update_overlay(page: Page, turn: int, total: int, reply: str, is_last: bool) -> None:
+    """
+    Update the floating overlay with the current step's agent reply
+    and render Next/Quit buttons. Strips any JSON that slipped through.
+    """
+    clean_reply = clean_for_display(reply)
+    if len(clean_reply) > OVERLAY_MAX_CHARS:
+        clean_reply = clean_reply[: OVERLAY_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+
+    next_label = "Finish" if is_last else "Next step →"
+    safe_reply = clean_reply.replace("\\", "\\\\").replace("`", "\\`").replace("'", "\\'")
+
+    page.evaluate(
+        """([msg, turn, total, nextLabel]) => {
+            try {
+                window.__guide_action__ = null;
+
+                // Update step badge
+                const badge = document.getElementById('__fsai_step_badge__');
+                if (badge) badge.textContent = 'Step ' + turn + ' / ' + total;
+
+                // Clear and repopulate message area
+                const area = document.getElementById('__fsai_msg_area__');
+                if (area) {
+                    area.innerHTML = '';
+
+                    // Step label
+                    const label = document.createElement('div');
+                    label.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:11px !important; font-weight:600 !important; color:#ff6600 !important; text-transform:uppercase !important; letter-spacing:0.5px !important;');
+                    label.textContent = 'Step ' + turn + ' of ' + total;
+                    area.appendChild(label);
+
+                    // Message text — split on newlines to preserve numbered steps
+                    const lines = msg.split('\\n');
+                    lines.forEach(line => {
+                        if (line.trim() === '') return;
+                        const p = document.createElement('div');
+                        p.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#e0e0e0 !important; line-height:1.55 !important; display:block !important;');
+                        p.textContent = line;
+                        area.appendChild(p);
+                    });
+
+                    // Scroll to bottom
+                    area.scrollTop = area.scrollHeight;
+                }
+
+                // Rebuild button row
+                const btnRow = document.getElementById('__fsai_btn_row__');
+                if (btnRow) {
+                    btnRow.innerHTML = '';
+
+                    const quitBtn = document.createElement('button');
+                    quitBtn.setAttribute('style', 'all:initial !important; background:transparent !important; color:#aaa !important; border:1px solid #555 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; padding:6px 12px !important; border-radius:6px !important; cursor:pointer !important; display:inline-block !important;');
+                    quitBtn.textContent = 'Quit';
+                    quitBtn.onclick = () => { window.__guide_action__ = 'quit'; };
+
+                    const nextBtn = document.createElement('button');
+                    nextBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important; display:inline-block !important;');
+                    nextBtn.textContent = nextLabel;
+                    nextBtn.onclick = () => { window.__guide_action__ = 'next'; };
+
+                    btnRow.appendChild(quitBtn);
+                    btnRow.appendChild(nextBtn);
+                }
+            } catch (e) {
+                console.error('overlay update error:', e);
+                window.__guide_action__ = 'next';
+            }
+        }""",
+        [safe_reply, turn, total, next_label],
+    )
+
+
+def show_overlay_end(page: Page, completed: bool) -> None:
+    """Show a final completion message in the overlay."""
+    heading = "Walkthrough complete!" if completed else "Walkthrough stopped."
+    body = (
+        "All steps done. Feel free to keep exploring FireMapSim."
+        if completed
+        else "You can keep exploring FireMapSim, or close this window."
+    )
+
+    page.evaluate(
+        """([heading, body]) => {
+            try {
+                window.__guide_action__ = null;
+
+                const badge = document.getElementById('__fsai_step_badge__');
+                if (badge) badge.textContent = '';
+
+                const area = document.getElementById('__fsai_msg_area__');
+                if (area) {
+                    area.innerHTML = '';
+
+                    const h = document.createElement('div');
+                    h.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:14px !important; font-weight:600 !important; color:#fff !important; display:block !important;');
+                    h.textContent = heading;
+                    area.appendChild(h);
+
+                    const b = document.createElement('div');
+                    b.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#aaa !important; margin-top:6px !important; display:block !important;');
+                    b.textContent = body;
+                    area.appendChild(b);
+                }
+
+                const btnRow = document.getElementById('__fsai_btn_row__');
+                if (btnRow) {
+                    btnRow.innerHTML = '';
+                    const closeBtn = document.createElement('button');
+                    closeBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important; display:inline-block !important;');
+                    closeBtn.textContent = 'Close browser';
+                    closeBtn.onclick = () => { window.__guide_action__ = 'close'; };
+                    btnRow.appendChild(closeBtn);
+                }
+            } catch (e) {
+                console.error('overlay end error:', e);
+                window.__guide_action__ = 'close';
+            }
+        }""",
+        [heading, body],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Existing helpers (highlight, caption, wait)
 # ---------------------------------------------------------------------------
 
 def chat(message: str) -> str:
@@ -219,10 +480,6 @@ def chat(message: str) -> str:
 
 
 def detect_step(reply: str) -> str | None:
-    """
-    Scan the agent reply for known keywords and return the matching step key,
-    or None if nothing is recognised.
-    """
     lower = reply.lower()
     for phrase, key in KEYWORD_MAP:
         if phrase in lower:
@@ -230,73 +487,7 @@ def detect_step(reply: str) -> str | None:
     return None
 
 
-def shorten(text: str, max_chars: int) -> str:
-    """Collapse whitespace and trim long agent replies for the on-page caption."""
-    flat = " ".join(text.split())
-    if len(flat) <= max_chars:
-        return flat
-    return flat[: max_chars - 1].rsplit(" ", 1)[0] + "…"
-
-
-def show_caption(page: Page, turn: int, total: int, message: str, is_last: bool) -> None:
-    """
-    Render a single floating caption box on the page with the current
-    step's instruction, plus "Next step" / "Quit" buttons. Replaces any
-    caption from the previous step. Clicking a button sets
-    window.__guide_action__ to "next" or "quit", which the Python side
-    polls for via wait_for_page_action().
-    """
-    safe_message = message.replace("\\", "\\\\").replace("`", "\\`")
-    next_label = "Finish" if is_last else "Next step"
-
-    page.evaluate(
-        """([msg, turn, total, nextLabel, captionCss, btnRowCss, nextCss, quitCss]) => {
-            try {
-                window.__guide_action__ = null;
-
-                let box = document.getElementById('__guide_caption__');
-                if (!box) {
-                    box = document.createElement('div');
-                    box.id = '__guide_caption__';
-                    (document.body || document.documentElement).appendChild(box);
-                }
-                box.setAttribute('style', captionCss);
-                box.innerHTML =
-                    '<div style="all:initial !important; display:block !important; font-weight:600 !important; margin-bottom:4px !important; color:#fff !important; font-family:inherit !important; font-size:15px !important;">Step ' + turn + ' / ' + total + '</div>' +
-                    '<div style="all:initial !important; display:block !important; color:#fff !important; font-family:inherit !important; font-size:15px !important; line-height:1.4 !important;">' + msg + '</div>' +
-                    '<div style="' + btnRowCss + '">' +
-                        '<button id="__guide_quit__" style="' + quitCss + '">Quit</button>' +
-                        '<button id="__guide_next__" style="' + nextCss + '">' + nextLabel + '</button>' +
-                    '</div>';
-
-                document.getElementById('__guide_next__').onclick = () => {
-                    window.__guide_action__ = 'next';
-                };
-                document.getElementById('__guide_quit__').onclick = () => {
-                    window.__guide_action__ = 'quit';
-                };
-            } catch (e) {
-                console.error('guide caption error:', e);
-                // Make sure we never hang forever if rendering fails.
-                window.__guide_action__ = 'next';
-            }
-        }""",
-        [safe_message, turn, total, next_label, CAPTION_CSS, CAPTION_BUTTON_ROW_CSS, NEXT_BUTTON_CSS, QUIT_BUTTON_CSS],
-    )
-
-
-def remove_caption(page: Page) -> None:
-    """Remove the floating caption box from the page, if present."""
-    page.evaluate(
-        """() => {
-            const box = document.getElementById('__guide_caption__');
-            if (box) box.remove();
-        }"""
-    )
-
-
 def highlight_on(page: Page, selector: str, label: str) -> None:
-    """Scroll the element into view and apply an orange outline."""
     try:
         locator: Locator = page.locator(selector).first
         locator.scroll_into_view_if_needed(timeout=5000)
@@ -317,7 +508,6 @@ def highlight_on(page: Page, selector: str, label: str) -> None:
 
 
 def highlight_off(page: Page, selector: str) -> None:
-    """Remove the highlight applied by highlight_on, if any."""
     try:
         page.evaluate(
             """([sel]) => {
@@ -334,69 +524,28 @@ def highlight_off(page: Page, selector: str) -> None:
 
 
 def wait_for_page_action(page: Page) -> str:
-    """
-    Block until the user clicks "Next step"/"Finish" or "Quit" in the
-    on-page caption. Returns "next" or "quit".
-    """
     page.wait_for_function(
         "() => window.__guide_action__ === 'next' || window.__guide_action__ === 'quit'",
-        timeout=0,  # no timeout — wait as long as the user needs
+        timeout=0,
     )
     return page.evaluate("() => window.__guide_action__")
 
 
-def narrate(reply: str) -> None:
-    """Print the full agent reply to the terminal with a clear separator."""
-    print("\n" + "-" * 60)
-    print(textwrap.fill(reply, width=78))
-    print("-" * 60 + "\n")
-
-
-def show_end_screen(page: Page, completed: bool) -> None:
-    """
-    Replace the caption with a final message and a single 'Close browser'
-    button. Sets window.__guide_action__ = 'close' when clicked.
-    """
-    if completed:
-        heading = "Walkthrough complete"
-        body = "You've gone through every step. Feel free to keep exploring FireMapSim, or close this window when you're done."
-    else:
-        heading = "Walkthrough stopped"
-        body = "You can keep exploring FireMapSim, or close this window when you're done."
-
-    page.evaluate(
-        """([heading, body, captionCss, btnRowCss, nextCss]) => {
-            try {
-                window.__guide_action__ = null;
-
-                let box = document.getElementById('__guide_caption__');
-                if (!box) {
-                    box = document.createElement('div');
-                    box.id = '__guide_caption__';
-                    (document.body || document.documentElement).appendChild(box);
-                }
-                box.setAttribute('style', captionCss);
-                box.innerHTML =
-                    '<div style="all:initial !important; display:block !important; font-weight:600 !important; margin-bottom:4px !important; color:#fff !important; font-family:inherit !important; font-size:15px !important;">' + heading + '</div>' +
-                    '<div style="all:initial !important; display:block !important; color:#fff !important; font-family:inherit !important; font-size:15px !important; line-height:1.4 !important;">' + body + '</div>' +
-                    '<div style="' + btnRowCss + '">' +
-                        '<button id="__guide_close__" style="' + nextCss + '">Close browser</button>' +
-                    '</div>';
-
-                document.getElementById('__guide_close__').onclick = () => {
-                    window.__guide_action__ = 'close';
-                };
-            } catch (e) {
-                console.error('guide end screen error:', e);
-                window.__guide_action__ = 'close';
-            }
-        }""",
-        [heading, body, CAPTION_CSS, CAPTION_BUTTON_ROW_CSS, NEXT_BUTTON_CSS],
+def wait_for_close(page: Page) -> None:
+    page.wait_for_function(
+        "() => window.__guide_action__ === 'close'",
+        timeout=0,
     )
 
 
+def narrate(reply: str) -> None:
+    print("\n" + "-" * 60)
+    print(textwrap.fill(clean_for_display(reply), width=78))
+    print("-" * 60 + "\n")
+
+
 # ---------------------------------------------------------------------------
-# Demo conversation script  (Canton, GA prescribed burn walkthrough)
+# Demo script
 # ---------------------------------------------------------------------------
 
 DEMO_SCRIPT = [
@@ -410,26 +559,45 @@ DEMO_SCRIPT = [
     "How do I start the simulation once everything is configured?",
 ]
 
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    launch_url = firesim_url(PROJECT_LAT, PROJECT_LNG, PROJECT_ZOOM)
+
     with sync_playwright() as pw:
-        # Launch a visible Chromium browser.
-        browser = pw.chromium.launch(headless=False, slow_mo=50)
-        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        # Maximize the real browser window — fixed viewport was cropping the UI.
+        browser = pw.chromium.launch(
+            headless=False,
+            slow_mo=50,
+            args=["--start-maximized"],
+        )
+        context = browser.new_context(no_viewport=True)
         page    = context.new_page()
 
-        print(f"Opening FireMapSim at {FIRESIM_URL} ...")
-        page.goto(FIRESIM_URL, wait_until="networkidle", timeout=60000)
-        print("Page loaded.  Starting guided walkthrough.\n")
-        print("Use the 'Next step' / 'Quit' buttons in the on-page caption box")
-        print("to control pacing — no need to switch back to this terminal.\n")
+        print(f"Opening FireMapSim at {launch_url} ...")
+        page.goto(launch_url, wait_until="domcontentloaded", timeout=60000)
+        # Wait for Mapbox canvas — networkidle can hang on tile streaming.
+        try:
+            page.wait_for_selector(".mapboxgl-canvas, .map-layer canvas", timeout=30000)
+        except Exception:
+            print("  !  Map canvas selector not found yet — continuing anyway.")
+        print("Page loaded.\n")
 
-        # Give the Vue app a moment to finish rendering.
-        time.sleep(3)
+        # Let the Vue app and Mapbox finish initializing.
+        time.sleep(2)
+
+        # 1. Inject the floating AI overlay (visible for the whole session).
+        inject_overlay(page)
+
+        # 2. Pan the map to the Canton, GA project location immediately.
+        print(f"Panning map to project location: ({PROJECT_LAT}, {PROJECT_LNG}) ...")
+        pan_map_to_project(page, PROJECT_LAT, PROJECT_LNG, PROJECT_ZOOM)
+        time.sleep(1)  # let the animation settle
+
+        print("Starting guided walkthrough.")
+        print("Use the 'Next step' / 'Quit' buttons in the on-screen overlay to control pacing.\n")
 
         total = len(DEMO_SCRIPT)
         active_selector: str | None = None
@@ -438,17 +606,16 @@ def main() -> None:
         for turn, user_msg in enumerate(DEMO_SCRIPT, start=1):
             print(f"\n[Turn {turn}/{total}]  User: {user_msg}")
 
-            # 1. Send message to agent
+            # Send to agent
             try:
                 reply = chat(user_msg)
             except Exception as exc:
                 print(f"  x API error: {exc}")
-                reply = f"(Could not reach the agent for this step: {exc})"
+                reply = f"Something went wrong reaching the assistant for this step. Please continue manually."
 
-            # 2. Print full agent reply in the terminal (log only)
             narrate(reply)
 
-            # 3. Detect which UI element to highlight and apply it
+            # Detect UI element to highlight
             step_key = detect_step(reply)
             if step_key and step_key in STEP_SELECTORS:
                 selector = STEP_SELECTORS[step_key]
@@ -458,19 +625,16 @@ def main() -> None:
                 print("  (no specific UI element detected for this step)")
                 active_selector = None
 
-            # 4. Show the caption with Next/Quit buttons
-            caption_text = shorten(reply, CAPTION_MAX_CHARS)
+            # Update the on-screen overlay with the agent's plain-English reply
             is_last = turn == total
-
             try:
-                show_caption(page, turn, total, caption_text, is_last)
-                # 5. Wait for the user to click Next/Finish or Quit on the page
+                update_overlay(page, turn, total, reply, is_last)
                 action = wait_for_page_action(page)
             except Exception as exc:
-                print(f"  !  Caption/button error, continuing automatically: {exc}")
+                print(f"  !  Overlay error, continuing automatically: {exc}")
                 action = "next"
 
-            # 6. Clean up this step's highlight before moving on
+            # Remove highlight before moving to next step
             if active_selector:
                 highlight_off(page, active_selector)
 
@@ -481,21 +645,14 @@ def main() -> None:
             completed = True
             print("\nGuided walkthrough complete.")
 
-        # Final screen: stays open until the user clicks "Close browser"
+        # Final screen
         try:
-            show_end_screen(page, completed)
-            wait_for_page_action_close(page)
+            show_overlay_end(page, completed)
+            wait_for_close(page)
         except Exception as exc:
             print(f"  !  End screen error: {exc}")
+
         browser.close()
-
-
-def wait_for_page_action_close(page: Page) -> None:
-    """Block until the user clicks 'Close browser' on the end screen."""
-    page.wait_for_function(
-        "() => window.__guide_action__ === 'close'",
-        timeout=0,
-    )
 
 
 if __name__ == "__main__":
