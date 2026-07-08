@@ -10,12 +10,12 @@ Usage:
 
 The script:
   1. Opens FireMapSim in a visible browser window.
-  2. Injects a floating chat overlay so the agent is visible on-screen.
+  2. Injects a full-height right sidebar so the agent is visible on-screen.
   3. Pans the map to the project location via Mapbox GL (Vue FireMap component).
   4. Sends each demo message to the local firesim-ai API (localhost:8000/chat).
   5. Parses the agent reply to detect which UI element to highlight.
   6. Scrolls to + visually highlights that element on the live page.
-  7. Shows agent responses in the floating overlay (no raw JSON ever shown).
+  7. Shows agent responses in the sidebar (no raw JSON, no truncation).
   8. Waits for the user to click "Next step" / "Quit" before continuing.
 
 Requires:
@@ -44,8 +44,8 @@ PROJECT_LAT = 34.2367621
 PROJECT_LNG = -84.4907621
 PROJECT_ZOOM = 13  # zoom level — 13 gives a good neighbourhood view
 
-# Max characters shown in the overlay per agent response.
-OVERLAY_MAX_CHARS = 400
+# Sidebar width — main page content is shifted left to make room.
+SIDEBAR_WIDTH = 360
 
 # ---------------------------------------------------------------------------
 # Styles
@@ -89,24 +89,25 @@ STEP_SELECTORS: dict[str, str] = {
 }
 
 KEYWORD_MAP: list[tuple[str, str]] = [
-    ("simulation duration",  "simulation_duration"),
-    ("wind speed",           "wind_speed"),
-    ("wind degree",          "wind_degree"),
-    ("wind direction",       "wind_degree"),
-    ("cell resolution",      "cell_resolution"),
-    ("cell space",           "cell_dimension"),
-    ("set project location", "set_project_location"),
-    ("go to project",        "go_project_location"),
+    # Most specific UI control names first; ignition before generic "duration".
     ("set line ignition",    "set_line_ignition"),
     ("set point ignition",   "set_point_ignition"),
     ("set fuel brake",       "set_fuel_brake"),
-    ("fuel brake",           "set_fuel_brake"),
+    ("set project location", "set_project_location"),
+    ("cell resolution",      "cell_resolution"),
+    ("cell space",           "cell_dimension"),
     ("get terrain",          "get_terrain_fuel"),
+    ("wind speed",           "wind_speed"),
+    ("wind degree",          "wind_degree"),
+    ("wind direction",       "wind_degree"),
+    ("simulation duration",  "simulation_duration"),
+    ("start simulation",     "start_simulation"),
+    ("reset simulation",     "reset_simulation"),
+    ("go to project",        "go_project_location"),
+    ("fuel brake",           "set_fuel_brake"),
     ("show fuel",            "show_fuel"),
     ("show slope",           "show_slope"),
     ("show aspect",          "show_aspect"),
-    ("start simulation",     "start_simulation"),
-    ("reset simulation",     "reset_simulation"),
     ("close project",        "close_project"),
     ("load sample",          "load_sample"),
     ("save project",         "save_project"),
@@ -206,220 +207,175 @@ def pan_map_to_project(
     print("  !  Map pan failed after retries — user can pan manually.")
 
 # ---------------------------------------------------------------------------
-# Floating chat overlay injected into the FireMapSim page
+# Right sidebar panel injected into the FireMapSim page
 # ---------------------------------------------------------------------------
 
-# The overlay HTML is injected once at startup and then updated on each step.
-# It sits in a fixed position panel on the right side of the screen so it
-# doesn't cover the map controls.
-
-OVERLAY_INIT_JS = """
-() => {
-    if (document.getElementById('__fsai_overlay__')) return;
-
-    const panel = document.createElement('div');
-    panel.id = '__fsai_overlay__';
-    panel.setAttribute('style', [
-        'all: initial',
-        'position: fixed',
-        'top: 16px',
-        'right: 16px',
-        'width: 340px',
-        'max-height: 80vh',
-        'z-index: 2147483647',
-        'display: flex',
-        'flex-direction: column',
-        'background: #1e1e1e',
-        'border-radius: 12px',
-        'border-left: 4px solid #ff6600',
-        'box-shadow: 0 8px 32px rgba(0,0,0,0.45)',
-        'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
-        'font-size: 14px',
-        'color: #fff',
-        'overflow: hidden',
-    ].join(' !important; ') + ' !important');
-
-    // Header bar
-    const header = document.createElement('div');
-    header.setAttribute('style', [
-        'all: initial',
-        'display: flex',
-        'align-items: center',
-        'gap: 8px',
-        'padding: 10px 14px',
-        'background: #2a2a2a',
-        'border-bottom: 1px solid #333',
-        'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
-        'flex-shrink: 0',
-    ].join(' !important; ') + ' !important');
-
-    const dot = document.createElement('span');
-    dot.setAttribute('style', 'all:initial !important; width:10px !important; height:10px !important; border-radius:50% !important; background:#ff6600 !important; display:inline-block !important; flex-shrink:0 !important;');
-
-    const title = document.createElement('span');
-    title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#fff !important; letter-spacing:0.3px !important;');
-    title.textContent = 'FireMapSim AI Co-pilot';
-
-    const stepBadge = document.createElement('span');
-    stepBadge.id = '__fsai_step_badge__';
-    stepBadge.setAttribute('style', 'all:initial !important; margin-left:auto !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:11px !important; color:#aaa !important;');
-    stepBadge.textContent = '';
-
-    header.appendChild(dot);
-    header.appendChild(title);
-    header.appendChild(stepBadge);
-
-    // Message area
-    const msgArea = document.createElement('div');
-    msgArea.id = '__fsai_msg_area__';
-    msgArea.setAttribute('style', [
-        'all: initial',
-        'flex: 1',
-        'overflow-y: auto',
-        'padding: 14px',
-        'display: flex',
-        'flex-direction: column',
-        'gap: 10px',
-        'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
-        'font-size: 14px',
-        'color: #e0e0e0',
-        'line-height: 1.5',
-        'min-height: 80px',
-        'max-height: 50vh',
-    ].join(' !important; ') + ' !important');
-
-    const placeholder = document.createElement('div');
-    placeholder.setAttribute('style', 'all:initial !important; color:#666 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; text-align:center !important; padding:20px 0 !important;');
-    placeholder.textContent = 'Starting guided walkthrough...';
-    msgArea.appendChild(placeholder);
-
-    // Button row
-    const btnRow = document.createElement('div');
-    btnRow.id = '__fsai_btn_row__';
-    btnRow.setAttribute('style', [
-        'all: initial',
-        'display: flex',
-        'gap: 8px',
-        'justify-content: flex-end',
-        'padding: 10px 14px',
-        'background: #2a2a2a',
-        'border-top: 1px solid #333',
-        'flex-shrink: 0',
-    ].join(' !important; ') + ' !important');
-
-    panel.appendChild(header);
-    panel.appendChild(msgArea);
-    panel.appendChild(btnRow);
-    (document.body || document.documentElement).appendChild(panel);
-
-    window.__guide_action__ = null;
-}
-"""
-
-def inject_overlay(page: Page) -> None:
-    """Inject the floating chat overlay panel into the page once."""
+def inject_sidebar(page: Page) -> None:
+    """Inject a full-height right sidebar and shift page content left."""
     try:
-        page.evaluate(OVERLAY_INIT_JS)
-        print("  -> Floating overlay injected.")
+        page.evaluate(
+            """(width) => {
+                if (document.getElementById('__fsai_sidebar__')) return;
+
+                document.documentElement.style.setProperty('margin-right', width + 'px', 'important');
+                document.body.style.setProperty('margin-right', width + 'px', 'important');
+
+                const panel = document.createElement('div');
+                panel.id = '__fsai_sidebar__';
+                panel.setAttribute('style', [
+                    'all: initial',
+                    'position: fixed',
+                    'top: 0',
+                    'right: 0',
+                    'bottom: 0',
+                    'width: ' + width + 'px',
+                    'height: 100vh',
+                    'z-index: 2147483647',
+                    'display: flex',
+                    'flex-direction: column',
+                    'background: #1e1e1e',
+                    'border-left: 3px solid #ff6600',
+                    'box-shadow: -4px 0 24px rgba(0,0,0,0.35)',
+                    'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
+                    'font-size: 14px',
+                    'color: #fff',
+                    'overflow: hidden',
+                    'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+
+                const header = document.createElement('div');
+                header.setAttribute('style', [
+                    'all: initial', 'display: flex', 'align-items: center', 'gap: 8px',
+                    'padding: 12px 16px', 'background: #2a2a2a', 'border-bottom: 1px solid #333',
+                    'font-family: -apple-system, Segoe UI, Roboto, sans-serif', 'flex-shrink: 0',
+                    'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+
+                const dot = document.createElement('span');
+                dot.setAttribute('style', 'all:initial !important; width:10px !important; height:10px !important; border-radius:50% !important; background:#ff6600 !important; display:inline-block !important;');
+                const title = document.createElement('span');
+                title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#fff !important;');
+                title.textContent = 'FireMapSim AI Co-pilot';
+                const stepBadge = document.createElement('span');
+                stepBadge.id = '__fsai_step_badge__';
+                stepBadge.setAttribute('style', 'all:initial !important; margin-left:auto !important; font-size:11px !important; color:#aaa !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                header.appendChild(dot);
+                header.appendChild(title);
+                header.appendChild(stepBadge);
+
+                const msgArea = document.createElement('div');
+                msgArea.id = '__fsai_msg_area__';
+                msgArea.setAttribute('style', [
+                    'all: initial', 'flex: 1 1 auto', 'overflow-y: auto', 'overflow-x: hidden',
+                    'padding: 16px', 'display: flex', 'flex-direction: column', 'gap: 10px',
+                    'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
+                    'font-size: 14px', 'color: #e0e0e0', 'line-height: 1.55',
+                    'min-height: 0', 'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+
+                const placeholder = document.createElement('div');
+                placeholder.setAttribute('style', 'all:initial !important; color:#666 !important; font-size:13px !important; text-align:center !important; padding:24px 0 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                placeholder.textContent = 'Starting guided walkthrough...';
+                msgArea.appendChild(placeholder);
+
+                const btnRow = document.createElement('div');
+                btnRow.id = '__fsai_btn_row__';
+                btnRow.setAttribute('style', [
+                    'all: initial', 'display: flex', 'gap: 8px', 'justify-content: flex-end',
+                    'padding: 12px 16px', 'background: #2a2a2a', 'border-top: 1px solid #333',
+                    'flex-shrink: 0', 'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+
+                panel.appendChild(header);
+                panel.appendChild(msgArea);
+                panel.appendChild(btnRow);
+                (document.body || document.documentElement).appendChild(panel);
+                window.__guide_action__ = null;
+                window.dispatchEvent(new Event('resize'));
+            }""",
+            SIDEBAR_WIDTH,
+        )
+        print("  -> Sidebar injected.")
     except Exception as exc:
-        print(f"  !  Overlay injection failed: {exc}")
+        print(f"  !  Sidebar injection failed: {exc}")
 
 
 def clean_for_display(text: str) -> str:
     """
-    Remove any JSON code fences or raw JSON objects that slipped through
-    the system prompt instructions. Also strips markdown bold/italic markers.
-    This is a safety net — the prompt changes should prevent this.
+    Prepare agent text for display: strip JSON fences, markdown, and any
+    double-escaped quotes that slipped through serialization.
     """
-    # Remove ```json ... ``` blocks entirely
     text = re.sub(r"```json[\s\S]*?```", "", text, flags=re.IGNORECASE)
-    # Remove any remaining ``` fences
     text = re.sub(r"```[\s\S]*?```", "", text)
-    # Remove lone backticks
     text = text.replace("`", "")
-    # Remove markdown bold/italic
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"\*(.+?)\*", r"\1", text)
-    # Collapse extra blank lines
+    # Fix double-escaped quotes from legacy manual JS escaping.
+    text = text.replace("\\'", "'").replace('\\"', '"')
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-def update_overlay(page: Page, turn: int, total: int, reply: str, is_last: bool) -> None:
-    """
-    Update the floating overlay with the current step's agent reply
-    and render Next/Quit buttons. Strips any JSON that slipped through.
-    """
-    clean_reply = clean_for_display(reply)
-    if len(clean_reply) > OVERLAY_MAX_CHARS:
-        clean_reply = clean_reply[: OVERLAY_MAX_CHARS].rsplit(" ", 1)[0] + "…"
-
+def update_sidebar(page: Page, turn: int, total: int, reply: str, is_last: bool) -> None:
+    """Update the sidebar with the current step text and Next/Quit buttons."""
+    display_text = clean_for_display(reply)
     next_label = "Finish" if is_last else "Next step →"
-    safe_reply = clean_reply.replace("\\", "\\\\").replace("`", "\\`").replace("'", "\\'")
 
+    # Playwright JSON-serializes arguments — pass plain strings, no manual escaping.
     page.evaluate(
-        """([msg, turn, total, nextLabel]) => {
+        """(data) => {
+            const { msg, turn, total, nextLabel } = data;
             try {
                 window.__guide_action__ = null;
 
-                // Update step badge
                 const badge = document.getElementById('__fsai_step_badge__');
                 if (badge) badge.textContent = 'Step ' + turn + ' / ' + total;
 
-                // Clear and repopulate message area
                 const area = document.getElementById('__fsai_msg_area__');
                 if (area) {
                     area.innerHTML = '';
 
-                    // Step label
                     const label = document.createElement('div');
-                    label.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:11px !important; font-weight:600 !important; color:#ff6600 !important; text-transform:uppercase !important; letter-spacing:0.5px !important;');
+                    label.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:11px !important; font-weight:600 !important; color:#ff6600 !important; text-transform:uppercase !important; letter-spacing:0.5px !important; margin-bottom:4px !important;');
                     label.textContent = 'Step ' + turn + ' of ' + total;
                     area.appendChild(label);
 
-                    // Message text — split on newlines to preserve numbered steps
                     const lines = msg.split('\\n');
-                    lines.forEach(line => {
-                        if (line.trim() === '') return;
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
                         const p = document.createElement('div');
-                        p.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#e0e0e0 !important; line-height:1.55 !important; display:block !important;');
+                        p.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#e0e0e0 !important; line-height:1.55 !important; display:block !important; margin-bottom:6px !important; word-wrap:break-word !important; overflow-wrap:break-word !important;');
                         p.textContent = line;
                         area.appendChild(p);
-                    });
-
-                    // Scroll to bottom
-                    area.scrollTop = area.scrollHeight;
+                    }
+                    area.scrollTop = 0;
                 }
 
-                // Rebuild button row
                 const btnRow = document.getElementById('__fsai_btn_row__');
                 if (btnRow) {
                     btnRow.innerHTML = '';
-
                     const quitBtn = document.createElement('button');
-                    quitBtn.setAttribute('style', 'all:initial !important; background:transparent !important; color:#aaa !important; border:1px solid #555 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; padding:6px 12px !important; border-radius:6px !important; cursor:pointer !important; display:inline-block !important;');
+                    quitBtn.setAttribute('style', 'all:initial !important; background:transparent !important; color:#aaa !important; border:1px solid #555 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; padding:6px 12px !important; border-radius:6px !important; cursor:pointer !important;');
                     quitBtn.textContent = 'Quit';
                     quitBtn.onclick = () => { window.__guide_action__ = 'quit'; };
-
                     const nextBtn = document.createElement('button');
-                    nextBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important; display:inline-block !important;');
+                    nextBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important;');
                     nextBtn.textContent = nextLabel;
                     nextBtn.onclick = () => { window.__guide_action__ = 'next'; };
-
                     btnRow.appendChild(quitBtn);
                     btnRow.appendChild(nextBtn);
                 }
             } catch (e) {
-                console.error('overlay update error:', e);
+                console.error('sidebar update error:', e);
                 window.__guide_action__ = 'next';
             }
         }""",
-        [safe_reply, turn, total, next_label],
+        {"msg": display_text, "turn": turn, "total": total, "nextLabel": next_label},
     )
 
 
-def show_overlay_end(page: Page, completed: bool) -> None:
-    """Show a final completion message in the overlay."""
+def show_sidebar_end(page: Page, completed: bool) -> None:
+    """Show a final completion message in the sidebar."""
     heading = "Walkthrough complete!" if completed else "Walkthrough stopped."
     body = (
         "All steps done. Feel free to keep exploring FireMapSim."
@@ -428,43 +384,38 @@ def show_overlay_end(page: Page, completed: bool) -> None:
     )
 
     page.evaluate(
-        """([heading, body]) => {
+        """(data) => {
+            const { heading, body } = data;
             try {
                 window.__guide_action__ = null;
-
                 const badge = document.getElementById('__fsai_step_badge__');
                 if (badge) badge.textContent = '';
-
                 const area = document.getElementById('__fsai_msg_area__');
                 if (area) {
                     area.innerHTML = '';
-
                     const h = document.createElement('div');
-                    h.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:14px !important; font-weight:600 !important; color:#fff !important; display:block !important;');
+                    h.setAttribute('style', 'all:initial !important; font-size:14px !important; font-weight:600 !important; color:#fff !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                     h.textContent = heading;
                     area.appendChild(h);
-
                     const b = document.createElement('div');
-                    b.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#aaa !important; margin-top:6px !important; display:block !important;');
+                    b.setAttribute('style', 'all:initial !important; font-size:13px !important; color:#aaa !important; margin-top:8px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                     b.textContent = body;
                     area.appendChild(b);
                 }
-
                 const btnRow = document.getElementById('__fsai_btn_row__');
                 if (btnRow) {
                     btnRow.innerHTML = '';
                     const closeBtn = document.createElement('button');
-                    closeBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important; display:inline-block !important;');
+                    closeBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important;');
                     closeBtn.textContent = 'Close browser';
                     closeBtn.onclick = () => { window.__guide_action__ = 'close'; };
                     btnRow.appendChild(closeBtn);
                 }
             } catch (e) {
-                console.error('overlay end error:', e);
                 window.__guide_action__ = 'close';
             }
         }""",
-        [heading, body],
+        {"heading": heading, "body": body},
     )
 
 
@@ -479,7 +430,10 @@ def chat(message: str) -> str:
     return resp.json()["reply"]
 
 
-def detect_step(reply: str) -> str | None:
+def detect_step(reply: str, expected: str | None = None) -> str | None:
+    """Return highlight key — prefer the scripted per-step target over LLM keywords."""
+    if expected and expected in STEP_SELECTORS:
+        return expected
     lower = reply.lower()
     for phrase, key in KEYWORD_MAP:
         if phrase in lower:
@@ -548,15 +502,41 @@ def narrate(reply: str) -> None:
 # Demo script
 # ---------------------------------------------------------------------------
 
-DEMO_SCRIPT = [
-    "I want to set up a prescribed burn simulation near Canton, GA.",
-    "What cell resolution and cell space dimension should I use?",
-    "How do I set the project location on the map?",
-    "Where do I enter wind speed and wind direction?",
-    "What simulation duration should I use for a prescribed burn?",
-    "How do I get the terrain and fuel data for this area?",
-    "Walk me through setting an ignition line.",
-    "How do I start the simulation once everything is configured?",
+# Each step maps a user message to the one UI control we highlight.
+# This avoids keyword mismatches when the agent mentions multiple fields.
+DEMO_STEPS: list[dict[str, str | None]] = [
+    {
+        "message": "I want to set up a prescribed burn simulation near Canton, GA.",
+        "highlight": None,
+    },
+    {
+        "message": "What cell resolution and cell space dimension should I use?",
+        "highlight": "cell_resolution",
+    },
+    {
+        "message": "How do I set the project location on the map?",
+        "highlight": "set_project_location",
+    },
+    {
+        "message": "Where do I enter wind speed and wind direction?",
+        "highlight": "wind_speed",
+    },
+    {
+        "message": "What simulation duration should I use for a prescribed burn?",
+        "highlight": "simulation_duration",
+    },
+    {
+        "message": "How do I get the terrain and fuel data for this area?",
+        "highlight": "get_terrain_fuel",
+    },
+    {
+        "message": "Walk me through setting an ignition line.",
+        "highlight": "set_line_ignition",
+    },
+    {
+        "message": "How do I start the simulation once everything is configured?",
+        "highlight": "start_simulation",
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -588,8 +568,8 @@ def main() -> None:
         # Let the Vue app and Mapbox finish initializing.
         time.sleep(2)
 
-        # 1. Inject the floating AI overlay (visible for the whole session).
-        inject_overlay(page)
+        # 1. Inject the right sidebar (visible for the whole session).
+        inject_sidebar(page)
 
         # 2. Pan the map to the Canton, GA project location immediately.
         print(f"Panning map to project location: ({PROJECT_LAT}, {PROJECT_LNG}) ...")
@@ -597,13 +577,16 @@ def main() -> None:
         time.sleep(1)  # let the animation settle
 
         print("Starting guided walkthrough.")
-        print("Use the 'Next step' / 'Quit' buttons in the on-screen overlay to control pacing.\n")
+        print("Use the 'Next step' / 'Quit' buttons in the sidebar to control pacing.\n")
 
-        total = len(DEMO_SCRIPT)
+        total = len(DEMO_STEPS)
         active_selector: str | None = None
         completed = False
 
-        for turn, user_msg in enumerate(DEMO_SCRIPT, start=1):
+        for turn, step in enumerate(DEMO_STEPS, start=1):
+            user_msg = str(step["message"])
+            expected_highlight = step.get("highlight")
+            expected_key = expected_highlight if isinstance(expected_highlight, str) else None
             print(f"\n[Turn {turn}/{total}]  User: {user_msg}")
 
             # Send to agent
@@ -611,27 +594,28 @@ def main() -> None:
                 reply = chat(user_msg)
             except Exception as exc:
                 print(f"  x API error: {exc}")
-                reply = f"Something went wrong reaching the assistant for this step. Please continue manually."
+                reply = "Something went wrong reaching the assistant for this step. Please continue manually."
 
             narrate(reply)
 
-            # Detect UI element to highlight
-            step_key = detect_step(reply)
+            # Highlight the control tied to this demo step (not LLM keyword guesswork).
+            step_key = detect_step(reply, expected=expected_key)
             if step_key and step_key in STEP_SELECTORS:
                 selector = STEP_SELECTORS[step_key]
-                highlight_on(page, selector, step_key)
+                highlight_on(page, selector, str(step_key))
                 active_selector = selector
+                print(f"  (scripted highlight: {step_key})")
             else:
-                print("  (no specific UI element detected for this step)")
+                print("  (no highlight for this step)")
                 active_selector = None
 
-            # Update the on-screen overlay with the agent's plain-English reply
+            # Update the sidebar with the agent's plain-English reply
             is_last = turn == total
             try:
-                update_overlay(page, turn, total, reply, is_last)
+                update_sidebar(page, turn, total, reply, is_last)
                 action = wait_for_page_action(page)
             except Exception as exc:
-                print(f"  !  Overlay error, continuing automatically: {exc}")
+                print(f"  !  Sidebar error, continuing automatically: {exc}")
                 action = "next"
 
             # Remove highlight before moving to next step
@@ -647,7 +631,7 @@ def main() -> None:
 
         # Final screen
         try:
-            show_overlay_end(page, completed)
+            show_sidebar_end(page, completed)
             wait_for_close(page)
         except Exception as exc:
             print(f"  !  End screen error: {exc}")
