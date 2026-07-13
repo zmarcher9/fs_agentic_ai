@@ -1,17 +1,17 @@
 # firesim-ai
 
-Agentic AI layer for the SIMS Lab **FireMapSim** wildfire simulation tool. Helps non-technical users (farmers, land managers) describe a burn scenario in plain language, get a valid simulation config, and follow step-by-step UI guidance to set up and run a simulation.
+Agentic AI layer for the SIMS Lab FireMapSim wildfire simulation tool. Helps non-technical users (farmers, land managers) describe a burn scenario in plain language, get a valid simulation config, follow step-by-step UI guidance, and drive the map by typing a place or coordinates in chat.
 
 ## Tech stack
 
-- **Python 3.11+**
-- **LangChain / LangGraph** — ReAct agent with tool calling and conversation memory
-- **OpenRouter** — `anthropic/claude-sonnet-4` via OpenAI-compatible API
-- **FastAPI / Uvicorn** — HTTP API for chat clients, Playwright, and demos
-- **Pydantic** — FireMapSim project schemas and API models
-- **geopy, pyproj, shapely** — geocoding and coordinate conversion
-
----
+- Python 3.11+
+- LangChain / LangGraph — ReAct agent with tool calling and conversation memory
+- OpenRouter — anthropic/claude-sonnet-4 via OpenAI-compatible API
+- FastAPI / Uvicorn — HTTP API for chat clients, Playwright, and demos
+- Pydantic — FireMapSim project schemas and API models
+- geopy, pyproj, shapely — geocoding and coordinate conversion
+- httpx — async Nominatim client for chat-driven map navigation (separate from geopy's client — see Known issues)
+- Playwright — drives FireMapSim in a real browser context (session pool + guide sidebar)
 
 ## Quick start
 
@@ -20,6 +20,7 @@ Agentic AI layer for the SIMS Lab **FireMapSim** wildfire simulation tool. Helps
 ```powershell
 cd fs_agentic_ai
 python -m pip install -r requirements.txt
+playwright install chromium
 ```
 
 On Windows, `pip-system-certs` is required so Python can reach OpenRouter over HTTPS (uses the Windows certificate store).
@@ -28,7 +29,7 @@ On Windows, `pip-system-certs` is required so Python can reach OpenRouter over H
 
 Create a `.env` file in the project root:
 
-```env
+```
 OPENROUTER_API_KEY=sk-or-v1-...
 FIRESIM_PATH=/path/to/firemapsim-or-url
 ```
@@ -47,164 +48,210 @@ python -m app.agent.agent
 python -m uvicorn api.main:app --reload --port 8000
 ```
 
-**Health check:**
+Health check:
 
 ```powershell
 Invoke-RestMethod http://localhost:8000/health
 ```
 
-**Chat:**
+Issue a session, then chat (same `X-Session-Id` is the LangGraph thread id and map pool key):
 
 ```powershell
+$session = Invoke-RestMethod -Uri http://localhost:8000/api/session -Method POST
+$headers = @{ "X-Session-Id" = $session.session_id }
+
 $body = @{
-  message   = "I want to run a prescribed burn near Canton, GA, about 200 acres"
-  thread_id = "demo-001"
+  message = "I want to run a prescribed burn near Canton, GA, about 200 acres"
 } | ConvertTo-Json
 
-Invoke-RestMethod -Uri http://localhost:8000/chat -Method POST -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri http://localhost:8000/chat -Method POST -ContentType "application/json" -Headers $headers -Body $body
 ```
 
----
+Map navigate:
+
+```powershell
+$body = @{ lat = 34.2368; lon = -84.4908; zoom = 13; label = "Canton, GA" } | ConvertTo-Json
+
+Invoke-RestMethod -Uri http://localhost:8000/api/map/navigate -Method POST -ContentType "application/json" -Headers $headers -Body $body
+```
+
+Demo / guide share a session via `FIRESIM_SESSION_ID` (must be issued by this API process):
+
+```powershell
+$env:FIRESIM_SESSION_ID = $session.session_id
+python demo/run_demo.py
+python playwright/guide.py
+```
 
 ## Project layout
 
 ```
 fs_agentic_ai/
 ├── api/
-│   └── main.py              # FastAPI app — GET /health, POST /chat
+│   └── main.py              # FastAPI app — /health, /api/session, /chat, /api/map/navigate
 ├── app/
 │   ├── agent/
-│   │   ├── agent.py         # LangGraph agent + run_agent()
-│   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT
-│   │   ├── tools.py         # LangChain tools (geocode, config, UI help)
-│   │   └── memory.py        # Legacy ConversationBufferWindowMemory (unused by current agent)
+│   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens)
+│   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (incl. map-nav rules)
+│   │   ├── tools.py         # geocode, config, UI help; registers resolve + navigate
+│   │   ├── tools_navigate_map.py
+│   │   ├── tools_resolve_location.py
+│   │   └── memory.py        # Legacy ConversationBufferWindowMemory (unused)
+│   ├── api/
+│   │   ├── routes.py         # Legacy stub routes under /api
+│   │   ├── routes_map.py     # POST /api/map/navigate
+│   │   └── cors_config.py    # ALLOWED_ORIGINS (confirm FireMapSim origin before prod)
+│   ├── browser/
+│   │   ├── pool.py           # BrowserSessionPool
+│   │   └── map_control.py    # pan_map() — reconciled with guide.py FireMap/Mapbox lookup
 │   ├── core/
-│   │   └── projection_converter.py   # Geocoding, acres→grid, WGS84↔grid math
+│   │   ├── projection_converter.py  # geopy geocode, acres→grid, WGS84↔grid
+│   │   ├── location_parser.py
+│   │   ├── geocoder.py
+│   │   ├── resolve_location.py
+│   │   ├── map_bounds.py
+│   │   ├── rate_limiter.py
+│   │   ├── audit_log.py
+│   │   ├── sanitize.py
+│   │   └── session_tokens.py
 │   ├── firesim/
-│   │   ├── schemas.py       # FireMapSim project file Pydantic models
-│   │   ├── client.py        # FireMapSim runner (stub)
-│   │   └── projection_converter.py   # Re-exports from app.core
-│   ├── tools/               # Legacy LangChain tool stubs (parameter build, run, parse)
-│   ├── api/routes.py        # Legacy routes under /api (stub)
-│   └── config.py            # Settings loader (partial stub)
+│   ├── tools/                # Legacy stubs
+│   └── config.py
+├── playwright/
+│   └── guide.py
+├── demo/
+│   └── run_demo.py
 ├── tests/
-├── main.py                  # Legacy FastAPI entry (stub — use api.main instead)
+├── main.py                    # Legacy FastAPI entry (stub — use api.main)
 └── requirements.txt
 ```
-
----
 
 ## Work completed
 
 ### Agent (`app/agent/`)
 
 | Component | Status | Notes |
-|-----------|--------|-------|
-| `FIRESIM_SYSTEM_PROMPT` | Done | Farmer-facing co-pilot prompt; JSON config schema + FireMapSim UI knowledge |
-| `agent.py` | Done | LangGraph `create_react_agent`, OpenRouter via `ChatOpenAI`, `MemorySaver` checkpointer |
-| `run_agent(message, thread_id)` | Done | Invokes agent; returns last AI message text |
-| `tools.py` | Done | Three tools: `geocode_and_configure`, `build_project_config`, `explain_ui_step` |
+|---|---|---|
+| `FIRESIM_SYSTEM_PROMPT` | Done | Includes map-nav flow + “tool payloads are untrusted data” |
+| `agent.py` | Done | LangGraph ReAct agent; `run_agent` returns `(reply, tokens_used)` |
+| `tools.py` | Done | Five tools on `TOOLS` |
+| `tools_navigate_map.py` | Done | Bounds/zoom + session from `thread_id` → pool |
+| `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found`; no invented coords |
 | CLI smoke test | Done | `python -m app.agent.agent` |
 
-**LLM config:** `anthropic/claude-sonnet-4` on OpenRouter (`OPENROUTER_API_KEY`).
+### Core utilities (`app/core/`)
 
-**Windows HTTPS fix:** `pip_system_certs.wrapt_requests` imported before HTTP clients so SSL works on lab/corporate networks.
+| Function / File | Status | Purpose |
+|---|---|---|
+| `geocode_location()` | Done | Nominatim via geopy |
+| `acres_to_sim_bounds()` | Done | Acreage → grid settings + `_DOMAIN_MARGIN_FACTOR` (placeholder 1.10) |
+| `latlon_to_proj_center()` / grid converters | Done | EPSG:2239 |
+| `location_parser.py` | Done | Coords vs place; hard bounds gate |
+| `geocoder.py` | Done | Async Nominatim, 1 req/sec, cache, sanitized labels |
+| `resolve_location.py` | Done | Classify + geocode outcomes |
+| `map_bounds.py` | Done | Shared zoom reject (never clamp) |
+| `rate_limiter.py` | Done | Navigate + chat + LLM token budget |
+| `audit_log.py` | Done | Structured navigate audit (`firesim.audit`) |
+| `sanitize.py` | Done | Strip injection-style text from geocoder labels |
+| `session_tokens.py` | Done | Issued, unguessable `X-Session-Id` tokens |
 
-### Core utilities (`app/core/projection_converter.py`)
+### Map navigation + API wiring
 
-| Function | Status | Purpose |
-|----------|--------|---------|
-| `geocode_location()` | Done | Nominatim geocoding (`user_agent="firesim-ai"`) |
-| `acres_to_sim_bounds()` | Done | Acreage → `cellResolution` + `cellSpaceDimension` |
-| `latlon_to_proj_center()` | Done | WGS84 → projected feet (EPSG:2239) |
-| `latlon_to_grid()` / `latlon_to_grid_int()` | Done | WGS84 → grid indices |
-| `grid_to_latlon()` | Done | Grid indices → WGS84 |
+| Component | Status | Notes |
+|---|---|---|
+| `BrowserSessionPool` | Wired | `pool.start()` / `pool.stop()` in `api.main` lifespan |
+| `map_control.pan_map` | Done | FireMap Vue walk + Mapbox DOM fallback; `flyTo` / `jumpTo` |
+| `POST /api/map/navigate` | Wired | Mounted on `api.main`; auth + rate limit + audit |
+| `POST /api/session` | Wired | Issues session token |
+| `POST /chat` | Wired | Requires `X-Session-Id`; chat rate limit + token budget |
+| CORS | Wired | `ALLOWED_ORIGINS` from `cors_config.py` (origin still a placeholder to confirm) |
 
-### FireMapSim schemas (`app/firesim/schemas.py`)
+### Bug fixes (this session)
 
-| Model | Status |
-|-------|--------|
-| `Segment`, `TeamInfo`, `SupLine` | Done — matches FireMapSim project JSON |
-| `SimulationConfig` | Done — validators for `team_num`, `sup_num`, etc. |
-| `SimulationResult`, `SimulationOutput`, `SimulationError` | Done — output/error placeholders |
-
-### HTTP API (`api/main.py`)
-
-| Route | Status |
-|-------|--------|
-| `GET /health` | Done |
-| `POST /chat` | Done — `{ message, thread_id }` → `{ reply }` |
-| CORS | Done — open for local demo (`allow_origins=["*"]`) |
-| Error handling | Done — 500 with message; traceback logged server-side |
+- **`explain_ui_step`** — unknown step returns structured JSON (`error`, `requested_step`, `available_steps`).
+- **`acres_to_sim_bounds`** — `_DOMAIN_MARGIN_FACTOR = 1.10` placeholder; confirm real FireMapSim buffer with docs / Dr. Hu.
 
 ### Tests
 
 | File | Status |
-|------|--------|
-| `tests/test_coordinate_translator.py` | Partial — geocoding, bounds, agent tools |
-| `tests/test_agent.py` | Partial — tool count, `run_agent` callable |
-| `tests/test_tools.py` | Stub — TODO placeholders |
+|---|---|
+| `tests/test_coordinate_translator.py` | Done |
+| `tests/test_location_parser.py` | Done |
+| `tests/test_geocoder.py` | Done (mocked httpx) |
+| `tests/test_resolve_location.py` | Done |
+| `tests/test_tools_resolve_location.py` | Done |
+| `tests/test_navigate_map.py` | Done |
+| `tests/test_browser_pool.py` | Done (fake Playwright + rate-limiter reset fixture) |
+| `tests/test_routes_map.py` | Done |
+| `tests/test_rate_limiter.py` / `test_sanitize.py` / `test_session_tokens.py` / `test_map_bounds.py` | Done |
+| `tests/test_agent.py` | Partial |
+| `tests/test_tools.py` | Stub |
+
+Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those manually before a live demo.
 
 ### Removed / replaced
 
-- `app/tools/coordinate_translator.py` — removed; logic moved to `app/core/` + `app/agent/tools.py`
-
----
+- `app/tools/coordinate_translator.py` — removed; logic in `app/core/` + agent tools
 
 ## Work remaining
 
 ### High priority (demo path)
 
-- [ ] **Playwright demo script** — drive FireMapSim UI or call `/chat` from a browser test; decide local vs `firesim.cs.gsu.edu`
-- [ ] **Consolidate API entry points** — root `main.py` and `app/api/routes.py` are stubs; either wire them to `api.main` or remove to avoid confusion
-- [ ] **Restore `.env.example`** — document required env vars (was deleted in a prior commit)
-- [ ] **Migrate `create_react_agent`** — LangGraph deprecation warning; future: `from langchain.agents import create_agent`
+- [ ] Confirm the real FireMapSim origin and drop `localhost:5173` from prod CORS
+- [ ] Diff `map_control.py` against `guide.py` once more if FireMap Vue internals change; optionally have `guide.py` import `pan_map`
+- [ ] Consolidate API entry points — root `main.py` / `app/api/routes.py` stubs
+- [ ] Restore `.env.example`
+- [ ] Migrate off deprecated `create_react_agent`
 
 ### Agent & tools
 
-- [ ] **Reliable tool use** — agent sometimes answers from LLM knowledge instead of calling `geocode_and_configure`; may need prompt tuning or forced tool use for location queries
-- [ ] **Bridge chat JSON → FireMapSim Apply button** — agent outputs chat-widget JSON; confirm format matches what the FireMapSim frontend expects
-- [ ] **Implement or remove legacy `app/tools/`** — `parameter_builder`, `run_simulation`, `parse_results` are still stubs
+- [ ] Reliable tool use for location (prefer `resolve_location` / `geocode_and_configure` over LLM guesswork)
+- [ ] Bridge chat config → FireMapSim Apply button format
+- [ ] Implement or remove legacy `app/tools/` stubs
 
 ### FireMapSim integration
 
-- [ ] **`app/firesim/client.py`** — run simulations via subprocess or HTTP API using `FIRESIM_PATH`
-- [ ] **Full project file generation** — map agent chat config (`proj_center_lat/lng`, wind, grid) → full `SimulationConfig` with ignition lines / fuel breaks
-- [ ] **EPSG:5070 vs EPSG:2239** — prompts say backend auto-converts to EPSG:5070; `projection_converter` still uses EPSG:2239 for grid math; align with production FireMapSim deployment
-- [ ] **Parse and explain simulation results** — implement `parse_results` tool
+- [ ] `app/firesim/client.py` — run simulations
+- [ ] Full project file generation (ignition / fuel breaks)
+- [ ] Align EPSG:5070 vs EPSG:2239 with production
+- [ ] Parse and explain simulation results
 
 ### Config & infrastructure
 
-- [ ] **`app/config.py`** — implement `get_settings()` and `validate_llm_config()`
-- [ ] **Production CORS** — restrict `allow_origins` before public deployment
-- [ ] **Async `/chat`** — `run_agent` is sync and blocks the event loop; consider `asyncio.to_thread` for production load
+- [ ] Finish `app/config.py`
+- [ ] Async `/chat` (`asyncio.to_thread` for sync `run_agent`)
+- [ ] One Nominatim client (geopy path + httpx path currently independent)
+- [ ] Real Nominatim `USER_AGENT` contact string
+- [ ] Streaming `POST /chat/stream` with SSE status (`Navigating to X…`)
+- [ ] Thread raw user text into navigate audit log (today: label proxy only)
+- [ ] Confirm `_DOMAIN_MARGIN_FACTOR` with FireMapSim / Dr. Hu
 
 ### Testing
 
-- [ ] Fill in stub tests in `tests/test_tools.py` and `tests/test_agent.py`
-- [ ] Add API integration tests for `/health` and `/chat` (mocked LLM)
-
----
+- [ ] Fill stub tests in `test_tools.py` / expand `test_agent.py`
+- [ ] API integration tests for `/health`, `/api/session`, `/chat` (mocked LLM)
+- [ ] Optional live Nominatim + Chromium smoke test
 
 ## Environment variables
 
 | Variable | Required | Purpose |
-|----------|----------|---------|
-| `OPENROUTER_API_KEY` | Yes (agent) | OpenRouter API key for Claude Sonnet 4 |
-| `FIRESIM_PATH` | Later | Path or URL to FireMapSim executable/API |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Yes (agent) | OpenRouter API key |
+| `FIRESIM_PATH` | Later | Path/URL to FireMapSim |
+| `FIRESIM_SESSION_ID` | Demo | Shared issued session between `demo/` and `guide.py` |
 | `APP_ENV` | No | Default `development` |
-| `LLM_PROVIDER` | No | Legacy setting in `config.py`; agent uses OpenRouter directly |
-
----
 
 ## Known issues
 
-1. **Two FastAPI apps** — Use `uvicorn api.main:app` for the working API. Root `main:app` mounts stub routes under `/api`.
-2. **LangGraph deprecation** — `create_react_agent` warning on startup; still works.
-3. **Windows SSL** — Requires `pip-system-certs` in addition to `certifi`; setting `$env:SSL_CERT_FILE` alone is not enough for the OpenAI client.
-4. **Geocoding rate limits** — Nominatim has usage limits; production may need caching or a paid geocoder.
-
----
+- **Two Nominatim clients** — `projection_converter.geocode_location()` (geopy) and `geocoder.geocode()` (httpx) are independent; only the latter is rate-limited/cached.
+- **Two FastAPI apps** — use `uvicorn api.main:app`. Root `main:app` is a stub.
+- **LangGraph deprecation** — `create_react_agent` warning on startup.
+- **Windows SSL** — needs `pip-system-certs`.
+- **Nominatim `User-Agent` placeholder** — set a real contact before production traffic.
+- **CORS origin placeholder** — confirm `https://firesim.cs.gsu.edu` matches deployment.
+- **Streaming not implemented** — `/chat` is blocking; no SSE status line yet.
+- **`_DOMAIN_MARGIN_FACTOR`** — `1.10` is a placeholder, not a confirmed FireMapSim buffer.
+- **Audit `requested_location`** — uses resolved `label`, not raw chat text.
 
 ## API reference (current)
 
@@ -214,26 +261,61 @@ fs_agentic_ai/
 { "status": "ok", "version": "0.1.0" }
 ```
 
+### `POST /api/session`
+
+Response:
+
+```json
+{ "session_id": "<ungessable token>" }
+```
+
 ### `POST /chat`
 
-**Request:**
+Header: `X-Session-Id: <issued token>`
+
+Request:
 
 ```json
 {
-  "message": "I want a prescribed burn near Canton, GA, 200 acres, wind from the southwest at 15 km/h",
-  "thread_id": "demo-001"
+  "message": "I want a prescribed burn near Canton, GA, 200 acres, wind from the southwest at 15 km/h"
 }
 ```
 
-**Response:**
+Response:
 
 ```json
 {
-  "reply": "...(markdown with JSON config block and UI steps)..."
+  "reply": "...",
+  "session_id": "<same token>"
 }
 ```
 
----
+Optional deprecated body field `thread_id` must match `X-Session-Id` if present. Failures: `401` missing/invalid session · `429` rate limit / token budget · `500` agent error.
+
+### `POST /api/map/navigate`
+
+Header: `X-Session-Id: <issued token>`
+
+Request:
+
+```json
+{ "lat": 34.2368, "lon": -84.4908, "zoom": 13, "label": "Canton, GA" }
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "lat": 34.2368,
+  "lon": -84.4908,
+  "zoom": 13,
+  "label": "Canton, GA",
+  "message": "Moved map to Canton, GA"
+}
+```
+
+Failure codes: `401` · `404` · `422` · `429` · `503`.
 
 ## License / attribution
 
