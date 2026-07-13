@@ -36,8 +36,10 @@ from playwright.sync_api import sync_playwright, Page, Locator
 
 FIRESIM_BASE = "https://firesim.cs.gsu.edu/home"
 API_URL      = "http://localhost:8000/chat"
+SESSION_URL  = "http://localhost:8000/api/session"
 
-THREAD_ID = os.environ.get("FIRESIM_THREAD_ID", "canton-demo-default")
+# Prefer FIRESIM_SESSION_ID from demo/run_demo.py; otherwise issue a new one.
+_SESSION_ID = os.environ.get("FIRESIM_SESSION_ID")
 
 # Canton, GA prescribed burn center coordinates
 PROJECT_LAT = 34.2367621
@@ -423,9 +425,26 @@ def show_sidebar_end(page: Page, completed: bool) -> None:
 # Existing helpers (highlight, caption, wait)
 # ---------------------------------------------------------------------------
 
+def get_session_id() -> str:
+    global _SESSION_ID
+    if _SESSION_ID:
+        return _SESSION_ID
+    resp = requests.post(SESSION_URL, timeout=30)
+    resp.raise_for_status()
+    _SESSION_ID = resp.json()["session_id"]
+    print(f"  Issued session_id={_SESSION_ID[:12]}… (set FIRESIM_SESSION_ID to share with demo)")
+    return _SESSION_ID
+
+
 def chat(message: str) -> str:
     """Send a message to the firesim-ai agent and return the reply."""
-    resp = requests.post(API_URL, json={"message": message, "thread_id": THREAD_ID}, timeout=120)
+    session_id = get_session_id()
+    resp = requests.post(
+        API_URL,
+        json={"message": message},
+        headers={"X-Session-Id": session_id},
+        timeout=120,
+    )
     resp.raise_for_status()
     return resp.json()["reply"]
 

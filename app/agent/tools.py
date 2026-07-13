@@ -4,6 +4,8 @@ import json
 
 from langchain_core.tools import tool
 
+from app.agent.tools_navigate_map import navigate_map
+from app.agent.tools_resolve_location import resolve_location_tool
 from app.core.projection_converter import acres_to_sim_bounds, geocode_location
 
 VALID_CELL_RESOLUTIONS = [2, 3, 5, 10, 15, 30]
@@ -119,8 +121,26 @@ def explain_ui_step(step: str) -> str:
     """Return plain-English instructions for a FireMapSim UI step by name."""
     if step in _UI_STEPS:
         return _UI_STEPS[step]
-    available = ", ".join(_UI_STEPS.keys())
-    return f"Step '{step}' not recognised. Available steps are: {available}"
+    # Unknown step: was falling through to a plain f-string, which the
+    # agent can narrate fine but callers/tests expecting a structured
+    # result (same "never silently succeed / never fake a result"
+    # pattern as navigate_map and resolve_location) couldn't parse.
+    # Return the same shape those tools use: a JSON error the caller
+    # can branch on, with the valid options included so the agent can
+    # correct the user without a second round trip.
+    return json.dumps(
+        {
+            "error": "Unknown step",
+            "requested_step": step,
+            "available_steps": list(_UI_STEPS.keys()),
+        }
+    )
 
 
-TOOLS = [geocode_and_configure, build_project_config, explain_ui_step]
+TOOLS = [
+    geocode_and_configure,
+    build_project_config,
+    explain_ui_step,
+    resolve_location_tool,
+    navigate_map,
+]

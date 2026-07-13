@@ -14,8 +14,15 @@ def mock_settings() -> Settings:
 
 
 def test_get_tools_returns_expected_tools() -> None:
-    """Agent should expose geocode, config, and UI guidance tools."""
-    assert len(TOOLS) == 3
+    """Agent should expose geocode, config, UI, resolve, and navigate tools."""
+    assert len(TOOLS) == 5
+    assert {t.name for t in TOOLS} == {
+        "geocode_and_configure",
+        "build_project_config",
+        "explain_ui_step",
+        "resolve_location",
+        "navigate_map",
+    }
 
 
 def test_run_agent_is_callable() -> None:

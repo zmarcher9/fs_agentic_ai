@@ -37,6 +37,17 @@ _ACRES_TO_SQM = 4046.856
 _CELL_SPACE_DIMENSIONS = [50, 100, 150, 200]
 _PREFERRED_CELL_RESOLUTION = 30
 
+# PLACEHOLDER — not a confirmed FireMapSim figure. Without this, a
+# requested acreage that lands within ~1-2% of a cellSpaceDimension
+# boundary picks a domain with virtually no buffer between the
+# requested footprint and the simulation edge (e.g. 5000 acres sizes to
+# a domain only ~1.7m larger than the fire's nominal footprint) — fire
+# spread can reach the sim boundary during a real run. Confirm the
+# actual intended buffer (FireMapSim docs / Dr. Hu) and replace this
+# value; 10% was chosen only to unblock the failing test, not because
+# it's the right number.
+_DOMAIN_MARGIN_FACTOR = 1.10
+
 _to_firesim = Transformer.from_crs(_WGS84_CRS, _FIRESIM_CRS, always_xy=True)
 _to_wgs84 = Transformer.from_crs(_FIRESIM_CRS, _WGS84_CRS, always_xy=True)
 
@@ -78,16 +89,19 @@ def acres_to_sim_bounds(center_lat: float, center_lon: float, acres: float) -> d
     Derive grid settings that cover a square region of the given acreage.
 
     Prefers 30 m cell resolution and picks the smallest cellSpaceDimension from
-    [50, 100, 150, 200] whose total side length exceeds the computed side length.
+    [50, 100, 150, 200] whose total side length exceeds the computed side
+    length by at least _DOMAIN_MARGIN_FACTOR (see that constant's docstring
+    note — its value is a placeholder pending confirmation).
     """
     if acres <= 0:
         raise ValueError("acres must be a positive number")
 
     side_m = math.sqrt(acres * _ACRES_TO_SQM)
+    required_side_m = side_m * _DOMAIN_MARGIN_FACTOR
     cell_resolution = _PREFERRED_CELL_RESOLUTION
     cell_space_dimension = _CELL_SPACE_DIMENSIONS[-1]
     for dim in _CELL_SPACE_DIMENSIONS:
-        if cell_resolution * dim > side_m:
+        if cell_resolution * dim > required_side_m:
             cell_space_dimension = dim
             break
 

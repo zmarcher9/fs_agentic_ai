@@ -18,21 +18,13 @@ Requires the FastAPI server to be running:
 Optional: also start the Playwright guide in a second terminal:
     python playwright/guide.py
 
-Thread ID:
-    This script and playwright/guide.py share an agent conversation via the
-    FIRESIM_THREAD_ID environment variable. If it's not set, both scripts
-    fall back to the same default thread ("canton-demo-default"), so by
-    default they're already talking about the same configured scenario.
+Thread / session ID:
+    Chat and map navigate require a server-issued X-Session-Id from
+    POST /api/session. This script issues one on first chat (or reuses
+    FIRESIM_SESSION_ID). Share that value with playwright/guide.py:
 
-    To use a fresh thread for a one-off run, set FIRESIM_THREAD_ID before
-    launching either script:
+        $env:FIRESIM_SESSION_ID = "<token from demo>"
 
-        export FIRESIM_THREAD_ID=canton-demo-20260615-130800   (bash)
-        $env:FIRESIM_THREAD_ID = "canton-demo-20260615-130800" (PowerShell)
-
-    Run this script first to configure the scenario, then run
-    playwright/guide.py with the SAME FIRESIM_THREAD_ID (if you set one)
-    to walk through the UI for that configured session.
 """
 
 import json
@@ -46,10 +38,12 @@ import requests
 # ---------------------------------------------------------------------------
 
 API_URL = "http://localhost:8000/chat"
+SESSION_URL = "http://localhost:8000/api/session"
 
-# Shared with playwright/guide.py via the FIRESIM_THREAD_ID env var, so both
-# scripts talk to the same agent conversation. See module docstring above.
-THREAD_ID = os.environ.get("FIRESIM_THREAD_ID", "canton-demo-default")
+# Prefer a server-issued token from a prior /api/session call (share across
+# demo + guide via FIRESIM_SESSION_ID). Otherwise a fresh token is issued
+# on first chat().
+_SESSION_ID = os.environ.get("FIRESIM_SESSION_ID")
 
 # Width for terminal output formatting
 TERM_WIDTH = 72
@@ -100,6 +94,17 @@ def print_agent(reply: str) -> None:
                 print(f"    {wrapped}")
 
 
+def get_session_id() -> str:
+    global _SESSION_ID
+    if _SESSION_ID:
+        return _SESSION_ID
+    resp = requests.post(SESSION_URL, timeout=30)
+    resp.raise_for_status()
+    _SESSION_ID = resp.json()["session_id"]
+    print(f"  (Issued session_id={_SESSION_ID[:12]}… — set FIRESIM_SESSION_ID to reuse)")
+    return _SESSION_ID
+
+
 def chat(message: str, pause: float = 0.5) -> str:
     """
     POST to /chat, return the agent reply.
@@ -107,9 +112,11 @@ def chat(message: str, pause: float = 0.5) -> str:
     """
     time.sleep(pause)
     try:
+        session_id = get_session_id()
         resp = requests.post(
             API_URL,
-            json={"message": message, "thread_id": THREAD_ID},
+            json={"message": message},
+            headers={"X-Session-Id": session_id},
             timeout=180,
         )
         resp.raise_for_status()
@@ -214,15 +221,14 @@ TURNS: list[tuple[str, str]] = [
 
 def main() -> None:
     header("firesim-ai  ·  Canton, GA Prescribed Burn Demo")
-    print(f"  Thread ID : {THREAD_ID}")
+    session_id = get_session_id()
+    print(f"  Session ID: {session_id[:16]}…")
     print(f"  API URL   : {API_URL}")
     print(f"  Turns     : {len(TURNS)}")
     print()
-    if "FIRESIM_THREAD_ID" not in os.environ:
-        print("  (Using default shared thread. playwright/guide.py will use")
-        print("   this same thread automatically if run without setting")
-        print("   FIRESIM_THREAD_ID either.)")
-        print()
+    print("  Share with playwright/guide.py via:")
+    print(f"    $env:FIRESIM_SESSION_ID = '{session_id}'")
+    print()
 
     # Check the API is up before starting
     section("Health check")
@@ -266,9 +272,9 @@ def main() -> None:
     print()
     print("  Next steps:")
     print("  1. Open https://firesim.cs.gsu.edu/ in your browser.")
-    print("  2. Run:  python playwright/guide.py")
-    print(f"     (it will use the same thread: {THREAD_ID})")
-    print("     The guide will highlight each field as the agent narrates.")
+    print("  2. Set the same session for the guide:")
+    print(f"       $env:FIRESIM_SESSION_ID = '{session_id}'")
+    print("  3. Run:  python playwright/guide.py")
     print()
     divider("═")
 
