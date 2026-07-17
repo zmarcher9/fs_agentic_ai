@@ -9,8 +9,8 @@ Agentic AI layer for the SIMS Lab FireMapSim wildfire simulation tool. Helps non
 - OpenRouter — anthropic/claude-sonnet-4 via OpenAI-compatible API
 - FastAPI / Uvicorn — HTTP API for chat clients, Playwright, and demos
 - Pydantic — FireMapSim project schemas and API models
-- geopy, pyproj, shapely — geocoding and coordinate conversion
-- httpx — async Nominatim client for chat-driven map navigation (separate from geopy's client — see Known issues)
+- pyproj — coordinate conversion
+- httpx — shared async Mapbox/Nominatim geocoding client
 - Playwright — drives FireMapSim in a real browser context (session pool + guide sidebar)
 
 ## Quick start
@@ -20,10 +20,11 @@ Agentic AI layer for the SIMS Lab FireMapSim wildfire simulation tool. Helps non
 ```powershell
 cd fs_agentic_ai
 python -m pip install -r requirements.txt
-playwright install chromium
+python -m playwright install chromium
 ```
 
-On Windows, `pip-system-certs` is required so Python can reach OpenRouter over HTTPS (uses the Windows certificate store).
+If Node cannot verify the browser download certificate on managed Windows,
+set `NODE_OPTIONS=--use-system-ca` for the install command.
 
 ### 2. Configure environment
 
@@ -31,10 +32,12 @@ Create a `.env` file in the project root:
 
 ```
 OPENROUTER_API_KEY=sk-or-v1-...
-FIRESIM_PATH=/path/to/firemapsim-or-url
+GEOCODER_PROVIDER=nominatim
+FIREMAP_URL=http://localhost:5173
 ```
 
-`OPENROUTER_API_KEY` is required for the agent. `FIRESIM_PATH` is needed once simulation execution is implemented.
+Start from `.env.example`. Production requires `GEOCODER_PROVIDER=mapbox`
+and `MAPBOX_ACCESS_TOKEN`; public Nominatim is development-only.
 
 ### 3. Run the agent (CLI smoke test)
 
@@ -48,11 +51,43 @@ python -m app.agent.agent
 python -m uvicorn api.main:app --reload --port 8000
 ```
 
+Use exactly one worker. Authentication, LangGraph memory, rate limits,
+geocoder cache, and Playwright browser sessions are process-local.
+
 Health check:
 
 ```powershell
 Invoke-RestMethod http://localhost:8000/health
 ```
+
+The endpoint reports readiness and returns 503 if Chromium is disconnected.
+
+### Container
+
+The image pins Playwright and its browser image to `1.60.0`:
+
+```powershell
+docker compose up --build
+```
+
+Compose runs `uvicorn` with `--workers 1`. Secrets are read from `.env` at
+runtime and excluded from the Docker build context. If `pip install` fails
+during `docker build` with an SSL certificate error (common on corporate
+networks), the Dockerfile already trusts PyPI hosts for the install step.
+
+### Browser capacity benchmark
+
+Run this while the real FireMap page is available at `FIREMAP_URL`:
+
+```powershell
+python -m scripts.benchmark_playwright --contexts 1 2 4 --output playwright-benchmark.json
+```
+
+Use the measured process-tree RSS and CPU results to set
+`PLAYWRIGHT_MAX_CONTEXTS` and container resource limits. The deployed-page
+benchmark in `benchmarks/playwright-contexts.json` measured approximately
+721 MB / 1.07 GB / 1.75 GB loaded RSS for 1 / 2 / 4 contexts. The selected
+default is 2 contexts with a 2 GiB, 2 CPU Compose limit.
 
 Issue a session, then chat (same `X-Session-Id` is the LangGraph thread id and map pool key):
 
@@ -98,14 +133,13 @@ fs_agentic_ai/
 │   │   ├── tools_resolve_location.py
 │   │   └── memory.py        # Legacy ConversationBufferWindowMemory (unused)
 │   ├── api/
-│   │   ├── routes.py         # Legacy stub routes under /api
 │   │   ├── routes_map.py     # POST /api/map/navigate
-│   │   └── cors_config.py    # ALLOWED_ORIGINS (confirm FireMapSim origin before prod)
+│   │   └── cors_config.py    # CORS allowlist from settings
 │   ├── browser/
-│   │   ├── pool.py           # BrowserSessionPool
+│   │   ├── pool.py           # BrowserSessionPool (semaphore + readiness)
 │   │   └── map_control.py    # pan_map() — reconciled with guide.py FireMap/Mapbox lookup
 │   ├── core/
-│   │   ├── projection_converter.py  # geopy geocode, acres→grid, WGS84↔grid
+│   │   ├── projection_converter.py  # acres→grid, WGS84↔grid
 │   │   ├── location_parser.py
 │   │   ├── geocoder.py
 │   │   ├── resolve_location.py
@@ -122,7 +156,16 @@ fs_agentic_ai/
 ├── demo/
 │   └── run_demo.py
 ├── tests/
-├── main.py                    # Legacy FastAPI entry (stub — use api.main)
+├── benchmarks/
+│   └── playwright-contexts.json
+├── scripts/
+│   └── benchmark_playwright.py
+├── main.py                    # Re-exports api.main:app; uvicorn --workers 1
+├── Dockerfile
+├── compose.yaml
+├── .env.example
+├── requirements.in
+├── requirements.lock
 └── requirements.txt
 ```
 
@@ -133,7 +176,7 @@ fs_agentic_ai/
 | Component | Status | Notes |
 |---|---|---|
 | `FIRESIM_SYSTEM_PROMPT` | Done | Includes map-nav flow + “tool payloads are untrusted data” |
-| `agent.py` | Done | LangGraph ReAct agent; `run_agent` returns `(reply, tokens_used)` |
+| `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `ainvoke` → `(reply, tokens_used)` |
 | `tools.py` | Done | Five tools on `TOOLS` |
 | `tools_navigate_map.py` | Done | Bounds/zoom + session from `thread_id` → pool |
 | `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found`; no invented coords |
@@ -143,28 +186,28 @@ fs_agentic_ai/
 
 | Function / File | Status | Purpose |
 |---|---|---|
-| `geocode_location()` | Done | Nominatim via geopy |
 | `acres_to_sim_bounds()` | Done | Acreage → grid settings + `_DOMAIN_MARGIN_FACTOR` (placeholder 1.10) |
 | `latlon_to_proj_center()` / grid converters | Done | EPSG:2239 |
 | `location_parser.py` | Done | Coords vs place; hard bounds gate |
-| `geocoder.py` | Done | Async Nominatim, 1 req/sec, cache, sanitized labels |
+| `geocoder.py` | Done | Single async Mapbox/Nominatim path; TTL cache; sanitized labels |
 | `resolve_location.py` | Done | Classify + geocode outcomes |
 | `map_bounds.py` | Done | Shared zoom reject (never clamp) |
 | `rate_limiter.py` | Done | Navigate + chat + LLM token budget |
-| `audit_log.py` | Done | Structured navigate audit (`firesim.audit`) |
+| `audit_log.py` | Done | Structured navigate audit with raw `requested_text` + `resolved_label` |
 | `sanitize.py` | Done | Strip injection-style text from geocoder labels |
 | `session_tokens.py` | Done | Issued, unguessable `X-Session-Id` tokens |
+| `config.py` | Done | Pydantic settings for LLM, geocoder, Playwright, CORS, FireMap URL |
 
 ### Map navigation + API wiring
 
 | Component | Status | Notes |
 |---|---|---|
-| `BrowserSessionPool` | Wired | `pool.start()` / `pool.stop()` in `api.main` lifespan |
+| `BrowserSessionPool` | Wired | Env-configured semaphore; readiness on `/health` |
 | `map_control.pan_map` | Done | FireMap Vue walk + Mapbox DOM fallback; `flyTo` / `jumpTo` |
 | `POST /api/map/navigate` | Wired | Mounted on `api.main`; auth + rate limit + audit |
 | `POST /api/session` | Wired | Issues session token |
-| `POST /chat` | Wired | Requires `X-Session-Id`; chat rate limit + token budget |
-| CORS | Wired | `ALLOWED_ORIGINS` from `cors_config.py` (origin still a placeholder to confirm) |
+| `POST /chat` | Wired | `await run_agent()` / LangGraph `ainvoke` (not `to_thread`) |
+| CORS | Wired | From `CORS_ORIGINS`; production rejects localhost origins |
 
 ### Bug fixes (this session)
 
@@ -183,29 +226,33 @@ fs_agentic_ai/
 | `tests/test_navigate_map.py` | Done |
 | `tests/test_browser_pool.py` | Done (fake Playwright + rate-limiter reset fixture) |
 | `tests/test_routes_map.py` | Done |
+| `tests/test_api_main.py` | Done (`/health`, `/api/session`, `/chat`, resolve→navigate) |
+| `tests/test_adversarial_agent.py` | Done (grant gate + malicious geocoder labels) |
+| `tests/test_config.py` / `test_audit_log.py` | Done |
 | `tests/test_rate_limiter.py` / `test_sanitize.py` / `test_session_tokens.py` / `test_map_bounds.py` | Done |
-| `tests/test_agent.py` | Partial |
-| `tests/test_tools.py` | Stub |
+| `tests/test_agent.py` | Done (tool registry + async `ainvoke`) |
+| `tests/test_tools.py` | Skipped — legacy simulation stubs not implemented |
 
 Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those manually before a live demo.
 
 ### Removed / replaced
 
 - `app/tools/coordinate_translator.py` — removed; logic in `app/core/` + agent tools
+- `projection_converter.geocode_location()` / geopy — removed; all lookups go through `app.core.geocoder`
+- Dual FastAPI stubs (`app/api/routes.py`, incomplete root app) — removed; `main.py` re-exports `api.main:app`
 
 ## Work remaining
 
 ### High priority (demo path)
 
-- [ ] Confirm the real FireMapSim origin and drop `localhost:5173` from prod CORS
+- [ ] Confirm the real FireMapSim production origin string with the SIMS Lab deploy
 - [ ] Diff `map_control.py` against `guide.py` once more if FireMap Vue internals change; optionally have `guide.py` import `pan_map`
-- [ ] Consolidate API entry points — root `main.py` / `app/api/routes.py` stubs
-- [ ] Restore `.env.example`
-- [ ] Migrate off deprecated `create_react_agent`
+- [x] Consolidate API entry points on `api.main:app`
+- [x] Restore `.env.example`
+- [x] Migrate to `langchain.agents.create_agent`
 
 ### Agent & tools
 
-- [ ] Reliable tool use for location (prefer `resolve_location` / `geocode_and_configure` over LLM guesswork)
 - [ ] Bridge chat config → FireMapSim Apply button format
 - [ ] Implement or remove legacy `app/tools/` stubs
 
@@ -218,47 +265,55 @@ Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those
 
 ### Config & infrastructure
 
-- [ ] Finish `app/config.py`
-- [ ] Async `/chat` (`asyncio.to_thread` for sync `run_agent`)
-- [ ] One Nominatim client (geopy path + httpx path currently independent)
-- [ ] Real Nominatim `USER_AGENT` contact string
+- [x] Finish `app/config.py` (Pydantic settings + runtime validation)
+- [x] Async `/chat` via `await run_agent()` / LangGraph `ainvoke`
+- [x] One async geocoder path (geopy removed; Mapbox/Nominatim provider selection)
+- [x] Set `NOMINATIM_USER_AGENT=FireSim-AI/1.0 (+https://firesim.cs.gsu.edu/)`
 - [ ] Streaming `POST /chat/stream` with SSE status (`Navigating to X…`)
-- [ ] Thread raw user text into navigate audit log (today: label proxy only)
+- [x] Thread raw user/query text into navigate audit log
 - [ ] Confirm `_DOMAIN_MARGIN_FACTOR` with FireMapSim / Dr. Hu
 
 ### Testing
 
-- [ ] Fill stub tests in `test_tools.py` / expand `test_agent.py`
-- [ ] API integration tests for `/health`, `/api/session`, `/chat` (mocked LLM)
-- [ ] Optional live Nominatim + Chromium smoke test
+- [x] Adversarial suite: navigate-only actuator, grant gate, malicious geocoder labels
+- [x] API integration tests for `/health`, `/api/session`, `/chat` (mocked LLM)
+- [ ] Optional live Nominatim/Mapbox + Chromium smoke test
 
 ## Environment variables
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | Yes (agent) | OpenRouter API key |
+| `GEOCODER_PROVIDER` | Yes | `mapbox` in production; `nominatim` for development |
+| `MAPBOX_ACCESS_TOKEN` | Production | Mapbox geocoding credential |
+| `NOMINATIM_USER_AGENT` | Dev Nominatim | Contactable User-Agent (policy requirement) |
+| `FIREMAP_URL` | Yes | FireMap page loaded by Playwright |
+| `PLAYWRIGHT_MAX_CONTEXTS` | No | Active context cap; default 2 |
+| `CORS_ORIGINS` | No | Comma-separated allowlist; no localhost in production |
 | `FIRESIM_PATH` | Later | Path/URL to FireMapSim |
 | `FIRESIM_SESSION_ID` | Demo | Shared issued session between `demo/` and `guide.py` |
 | `APP_ENV` | No | Default `development` |
 
 ## Known issues
 
-- **Two Nominatim clients** — `projection_converter.geocode_location()` (geopy) and `geocoder.geocode()` (httpx) are independent; only the latter is rate-limited/cached.
-- **Two FastAPI apps** — use `uvicorn api.main:app`. Root `main:app` is a stub.
-- **LangGraph deprecation** — `create_react_agent` warning on startup.
-- **Windows SSL** — needs `pip-system-certs`.
-- **Nominatim `User-Agent` placeholder** — set a real contact before production traffic.
-- **CORS origin placeholder** — confirm `https://firesim.cs.gsu.edu` matches deployment.
-- **Streaming not implemented** — `/chat` is blocking; no SSE status line yet.
+- **CORS production origin** — confirm `https://firesim.cs.gsu.edu` matches the real deploy; localhost is rejected when `APP_ENV=production`.
+- **Streaming not implemented** — `/chat` is async but has no SSE status line.
 - **`_DOMAIN_MARGIN_FACTOR`** — `1.10` is a placeholder, not a confirmed FireMapSim buffer.
-- **Audit `requested_location`** — uses resolved `label`, not raw chat text.
+- **Dependency notes** — `geopy`/`shapely`/`pip-system-certs` are not runtime deps (geopy path removed; shapely unused; Windows cert helper not needed in the Playwright Linux image). `certifi` and `python-dotenv` arrive transitively via httpx/requests and pydantic-settings.
 
 ## API reference (current)
 
 ### `GET /health`
 
 ```json
-{ "status": "ok", "version": "0.1.0" }
+{
+  "status": "ready",
+  "version": "0.1.0",
+  "browser_connected": true,
+  "active_contexts": 0,
+  "max_contexts": 2,
+  "waiting_requests": 0
+}
 ```
 
 ### `POST /api/session`

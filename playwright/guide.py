@@ -30,13 +30,16 @@ import textwrap
 import requests
 from playwright.sync_api import sync_playwright, Page, Locator
 
+from app.config import get_settings
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-FIRESIM_BASE = "https://firesim.cs.gsu.edu/home"
-API_URL      = "http://localhost:8000/chat"
-SESSION_URL  = "http://localhost:8000/api/session"
+_settings = get_settings()
+FIRESIM_BASE = _settings.firemap_url
+API_URL = f"{_settings.api_base_url.rstrip('/')}/chat"
+SESSION_URL = f"{_settings.api_base_url.rstrip('/')}/api/session"
 
 # Prefer FIRESIM_SESSION_ID from demo/run_demo.py; otherwise issue a new one.
 _SESSION_ID = os.environ.get("FIRESIM_SESSION_ID")

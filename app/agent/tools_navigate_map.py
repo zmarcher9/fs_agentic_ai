@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from app.agent.navigation_grants import navigation_grants
 from app.browser.pool import MapNotReadyError, NoActiveSessionError, PoolExhaustedError, pool
 from app.core.location_parser import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
 from app.core.map_bounds import MAX_ZOOM, MIN_ZOOM
@@ -66,6 +67,7 @@ async def navigate_map(
     un-geocoded place name in lat/lon.
     """
     session_id = _session_id_from_config(config)
+    grant = navigation_grants.consume(session_id, lat, lon)
 
     try:
         result = await pool.navigate(
@@ -73,7 +75,10 @@ async def navigate_map(
             lat=lat,
             lon=lon,
             zoom=zoom,
-            label=label,
+            # The external label comes from the sanitized resolver result, not
+            # from model-authored tool arguments.
+            label=grant.label,
+            requested_text=grant.raw_query,
             source="tool",
         )
     except (

@@ -1,0 +1,40 @@
+{
+  "measured_at": "2026-07-17",
+  "target_url": "https://firesim.cs.gsu.edu/home",
+  "playwright_version": "1.60.0",
+  "host_os": "Windows 10.0.26200",
+  "measurements": [
+    {
+      "contexts": 1,
+      "load_seconds": 7.495,
+      "baseline_rss_mb": 319.02,
+      "loaded_rss_mb": 721.3,
+      "incremental_rss_mb": 402.29,
+      "cpu_seconds_during_load": 6.922,
+      "process_count": 6
+    },
+    {
+      "contexts": 2,
+      "load_seconds": 4.055,
+      "baseline_rss_mb": 320.48,
+      "loaded_rss_mb": 1072.69,
+      "incremental_rss_mb": 752.21,
+      "cpu_seconds_during_load": 15.141,
+      "process_count": 7
+    },
+    {
+      "contexts": 4,
+      "load_seconds": 4.893,
+      "baseline_rss_mb": 321.04,
+      "loaded_rss_mb": 1751.27,
+      "incremental_rss_mb": 1430.22,
+      "cpu_seconds_during_load": 25.984,
+      "process_count": 9
+    }
+  ],
+  "selected_defaults": {
+    "max_contexts": 2,
+    "container_memory": "2g",
+    "container_cpus": 2.0
+  }
+}

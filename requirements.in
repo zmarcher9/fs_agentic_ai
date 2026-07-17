@@ -1,3 +1,4 @@
+# Runtime
 fastapi==0.136.1
 uvicorn==0.47.0
 pydantic==2.13.4
@@ -11,5 +12,7 @@ requests==2.34.2
 playwright==1.60.0
 pyproj==3.7.2
 psutil==7.2.2
+
+# Test
 pytest==9.0.3
 pytest-asyncio==1.4.0

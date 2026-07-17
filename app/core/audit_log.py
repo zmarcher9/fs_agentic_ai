@@ -29,6 +29,7 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 MAX_LABEL_LOG_LENGTH = 200
+MAX_REQUEST_TEXT_LENGTH = 500
 MAX_ERROR_LOG_LENGTH = 500
 
 
@@ -41,21 +42,24 @@ def log_navigation(
     ok: bool,
     source: str,
     error: Optional[str] = None,
+    requested_text: Optional[str] = None,
 ) -> None:
     """
     Emit one structured audit record for a navigate attempt.
 
-    `label` is the closest available proxy for "what did the user ask
-    for" — navigate_map only ever sees resolved lat/lon/label, not the
-    original chat text. Threading the actual raw user message into this
-    log would mean passing it from wherever /chat or the agent graph
-    first sees it, down through resolve_location and navigate_map —
-    not done here since I don't have visibility into that call site.
+    Prefer `requested_text` (raw chat / resolve query) over the resolved
+    geocoder label — adversarial and ambiguity investigations need the
+    user's actual input, not only the sanitized place name that won.
     """
     record = {
         "timestamp": time.time(),
         "session_id": session_id,
-        "requested_location": (label or "")[:MAX_LABEL_LOG_LENGTH] or None,
+        "requested_text": (requested_text or "")[:MAX_REQUEST_TEXT_LENGTH] or None,
+        "resolved_label": (label or "")[:MAX_LABEL_LOG_LENGTH] or None,
+        # Kept for older log consumers; mirrors requested_text when present.
+        "requested_location": (
+            (requested_text or label or "")[:MAX_LABEL_LOG_LENGTH] or None
+        ),
         "lat": lat,
         "lon": lon,
         "zoom": zoom,

@@ -1,38 +1,49 @@
 """LangGraph ReAct agent wiring for the FireMapSim setup co-pilot."""
 
-import os
-from pathlib import Path
+import asyncio
+from collections import defaultdict
+from functools import lru_cache
+from typing import Any
 
-import pip_system_certs.wrapt_requests  # noqa: F401 — use Windows trust store for HTTPS
-from dotenv import load_dotenv
+from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
 
 from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
 from app.agent.tools import TOOLS
+from app.config import get_settings
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+_turn_semaphore: asyncio.Semaphore | None = None
+_session_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-_openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-if not _openrouter_api_key:
-    raise ValueError(
-        "OPENROUTER_API_KEY is not set. Add it to the .env file in the project root."
+
+@lru_cache
+def get_agent() -> Any:
+    """Build the process-wide agent lazily after settings have been validated."""
+    settings = get_settings()
+    if not settings.openrouter_api_key:
+        raise ValueError("OPENROUTER_API_KEY is required to run the agent")
+    llm = ChatOpenAI(
+        model=settings.llm_model,
+        openai_api_key=settings.openrouter_api_key,
+        openai_api_base=settings.openrouter_base_url,
+    )
+    return create_agent(
+        model=llm,
+        tools=TOOLS,
+        checkpointer=MemorySaver(),
+        system_prompt=FIRESIM_SYSTEM_PROMPT,
+        name="firesim_setup_copilot",
     )
 
-_llm = ChatOpenAI(
-    model="anthropic/claude-sonnet-4",
-    openai_api_key=_openrouter_api_key,
-    openai_api_base="https://openrouter.ai/api/v1",
-)
 
-_agent = create_react_agent(
-    model=_llm,
-    tools=TOOLS,
-    checkpointer=MemorySaver(),
-    prompt=FIRESIM_SYSTEM_PROMPT,
-)
+def reset_agent() -> None:
+    """Reset lazy process state for tests or an explicit configuration reload."""
+    global _turn_semaphore
+    get_agent.cache_clear()
+    _turn_semaphore = None
+    _session_locks.clear()
 
 
 def _content_to_text(content: str | list) -> str:
@@ -46,7 +57,7 @@ def _content_to_text(content: str | list) -> str:
     return ""
 
 
-def run_agent(user_message: str, thread_id: str = "default") -> tuple[str, int]:
+async def run_agent(user_message: str, thread_id: str = "default") -> tuple[str, int]:
     """
     Run the FireMapSim co-pilot agent.
 
@@ -54,10 +65,18 @@ def run_agent(user_message: str, thread_id: str = "default") -> tuple[str, int]:
     message usage_metadata when the provider reports it; otherwise a
     rough char-based estimate so llm_token_budget still has something to enforce.
     """
-    result = _agent.invoke(
-        {"messages": [HumanMessage(content=user_message)]},
-        config={"configurable": {"thread_id": thread_id}},
-    )
+    global _turn_semaphore
+    if _turn_semaphore is None:
+        _turn_semaphore = asyncio.Semaphore(get_settings().llm_max_concurrent_turns)
+
+    # Preserve LangGraph message order within a session while bounding total
+    # provider concurrency across independent sessions.
+    async with _session_locks[thread_id]:
+        async with _turn_semaphore:
+            result = await get_agent().ainvoke(
+                {"messages": [HumanMessage(content=user_message)]},
+                config={"configurable": {"thread_id": thread_id}},
+            )
     tokens_used = _estimate_tokens(result["messages"], user_message)
     for message in reversed(result["messages"]):
         if isinstance(message, AIMessage):
@@ -84,8 +103,11 @@ def _estimate_tokens(messages: list, user_message: str) -> int:
 
 
 if __name__ == "__main__":
-    text, _tokens = run_agent(
-        "I want to do a prescribed burn near Canton, GA, about 200 acres, "
-        "wind from the southwest at 15 km/h"
-    )
-    print(text)
+    async def _main() -> None:
+        text, _tokens = await run_agent(
+            "I want to do a prescribed burn near Canton, GA, about 200 acres, "
+            "wind from the southwest at 15 km/h"
+        )
+        print(text)
+
+    asyncio.run(_main())

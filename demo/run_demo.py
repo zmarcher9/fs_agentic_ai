@@ -33,12 +33,17 @@ import time
 import textwrap
 import requests
 
+from app.config import get_settings
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-API_URL = "http://localhost:8000/chat"
-SESSION_URL = "http://localhost:8000/api/session"
+_settings = get_settings()
+API_BASE_URL = _settings.api_base_url.rstrip("/")
+FIREMAP_URL = _settings.firemap_url
+API_URL = f"{API_BASE_URL}/chat"
+SESSION_URL = f"{API_BASE_URL}/api/session"
 
 # Prefer a server-issued token from a prior /api/session call (share across
 # demo + guide via FIRESIM_SESSION_ID). Otherwise a fresh token is issued
@@ -123,7 +128,7 @@ def chat(message: str, pause: float = 0.5) -> str:
         return resp.json()["reply"]
     except requests.exceptions.ConnectionError:
         return (
-            "[ERROR] Could not reach the firesim-ai API at localhost:8000.\n"
+            f"[ERROR] Could not reach the firesim-ai API at {API_BASE_URL}.\n"
             "Make sure the server is running:\n"
             "    python -m uvicorn api.main:app --reload --port 8000"
         )
@@ -233,7 +238,7 @@ def main() -> None:
     # Check the API is up before starting
     section("Health check")
     try:
-        resp = requests.get("http://localhost:8000/health", timeout=5)
+        resp = requests.get(f"{API_BASE_URL}/health", timeout=5)
         resp.raise_for_status()
         status = resp.json()
         print(f"  ✓  API is up — {status}")
@@ -271,7 +276,7 @@ def main() -> None:
     divider("═")
     print()
     print("  Next steps:")
-    print("  1. Open https://firesim.cs.gsu.edu/ in your browser.")
+    print(f"  1. Open {FIREMAP_URL} in your browser.")
     print("  2. Set the same session for the guide:")
     print(f"       $env:FIRESIM_SESSION_ID = '{session_id}'")
     print("  3. Run:  python playwright/guide.py")

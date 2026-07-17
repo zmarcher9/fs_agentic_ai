@@ -76,7 +76,11 @@ class FakeBrowser:
 
 
 async def _new_pool(max_contexts=8, idle_ttl_seconds=600.0):
-    p = BrowserSessionPool(max_contexts=max_contexts, idle_ttl_seconds=idle_ttl_seconds)
+    p = BrowserSessionPool(
+        max_contexts=max_contexts,
+        idle_ttl_seconds=idle_ttl_seconds,
+        acquire_timeout_seconds=0.01,
+    )
     await p.start(browser=FakeBrowser())
     return p
 
@@ -108,6 +112,35 @@ async def test_pool_exhausted_raises():
     await pool.get_or_create("session-2")
     with pytest.raises(PoolExhaustedError):
         await pool.get_or_create("session-3")
+
+
+@pytest.mark.asyncio
+async def test_waiting_session_acquires_slot_after_context_is_dropped():
+    pool = BrowserSessionPool(
+        max_contexts=1,
+        max_waiters=1,
+        acquire_timeout_seconds=0.2,
+    )
+    await pool.start(browser=FakeBrowser())
+    await pool.get_or_create("session-1")
+
+    waiting = asyncio.create_task(pool.get_or_create("session-2"))
+    await asyncio.sleep(0.01)
+    assert pool.readiness()["waiting_requests"] == 1
+
+    await pool.drop_session("session-1")
+    entry = await waiting
+
+    assert entry is not None
+    assert "session-2" in pool._entries
+
+
+@pytest.mark.asyncio
+async def test_readiness_tracks_browser_connection():
+    pool = BrowserSessionPool(max_contexts=1)
+    assert pool.is_ready() is False
+    await pool.start(browser=FakeBrowser())
+    assert pool.readiness()["browser_connected"] is True
 
 
 @pytest.mark.asyncio

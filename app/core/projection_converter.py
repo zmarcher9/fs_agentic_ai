@@ -19,7 +19,6 @@ Note on coverage:
 
 import math
 
-from geopy.geocoders import Nominatim
 from pyproj import Transformer
 
 # ---------------------------------------------------------------------------
@@ -50,38 +49,6 @@ _DOMAIN_MARGIN_FACTOR = 1.10
 
 _to_firesim = Transformer.from_crs(_WGS84_CRS, _FIRESIM_CRS, always_xy=True)
 _to_wgs84 = Transformer.from_crs(_FIRESIM_CRS, _WGS84_CRS, always_xy=True)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-def geocode_location(description: str) -> tuple[float, float]:
-    """
-    Geocode a plain address or place name to WGS84 center coordinates.
-
-    Args:
-        description: Address or place string to geocode.
-
-    Returns:
-        (center_lat, center_lon) in decimal degrees (WGS84).
-
-    Raises:
-        ValueError: If geocoding returns no result.
-    """
-    text = description.strip()
-    if not text:
-        raise ValueError("location description cannot be empty")
-
-    geolocator = Nominatim(user_agent="firesim-ai")
-    geo = geolocator.geocode(text)
-    if geo is None:
-        raise ValueError(
-            f'Could not geocode location "{text}". '
-            "Try a more specific address or place name."
-        )
-    return float(geo.latitude), float(geo.longitude)
 
 
 def acres_to_sim_bounds(center_lat: float, center_lon: float, acres: float) -> dict:

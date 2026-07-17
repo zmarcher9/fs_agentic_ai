@@ -4,6 +4,7 @@ import pytest
 from langchain_core.runnables import RunnableConfig
 
 from app.agent import tools_navigate_map
+from app.agent.navigation_grants import NavigationGrant
 from app.agent.tools_navigate_map import navigate_map
 
 
@@ -30,6 +31,13 @@ def fake_pool_navigate(monkeypatch):
         }
 
     monkeypatch.setattr(tools_navigate_map.pool, "navigate", fake_navigate)
+    monkeypatch.setattr(
+        tools_navigate_map.navigation_grants,
+        "consume",
+        lambda session_id, lat, lon: NavigationGrant(
+            lat=lat, lon=lon, label="Canton, GA"
+        ),
+    )
     return calls
 
 

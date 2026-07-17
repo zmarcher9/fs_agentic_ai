@@ -6,7 +6,8 @@ from langchain_core.tools import tool
 
 from app.agent.tools_navigate_map import navigate_map
 from app.agent.tools_resolve_location import resolve_location_tool
-from app.core.projection_converter import acres_to_sim_bounds, geocode_location
+from app.core.projection_converter import acres_to_sim_bounds
+from app.core.resolve_location import resolve_location
 
 VALID_CELL_RESOLUTIONS = [2, 3, 5, 10, 15, 30]
 VALID_CELL_SPACE_DIMENSIONS = [50, 100, 150, 200]
@@ -77,10 +78,24 @@ _UI_STEPS: dict[str, str] = {
 
 
 @tool
-def geocode_and_configure(location: str, acres: float) -> str:
-    """Geocode a place name and compute recommended FireMapSim grid settings for the given acreage."""
-    lat, lon = geocode_location(location)
-    result = acres_to_sim_bounds(lat, lon, acres)
+async def geocode_and_configure(location: str, acres: float) -> str:
+    """Resolve a location and compute recommended FireMapSim grid settings."""
+    resolved = await resolve_location(location)
+    if resolved.status != "resolved":
+        return json.dumps(
+            {
+                "ok": False,
+                "status": resolved.status,
+                "query": resolved.query,
+                "candidates": [
+                    {"lat": item.lat, "lon": item.lon, "display_name": item.display_name}
+                    for item in resolved.candidates
+                ],
+                "message": resolved.message,
+            }
+        )
+    result = acres_to_sim_bounds(resolved.lat, resolved.lon, acres)
+    result.update({"ok": True, "status": "resolved", "label": resolved.label})
     return json.dumps(result)
 
 

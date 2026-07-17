@@ -11,7 +11,8 @@ from app.agent.tools import (
     explain_ui_step,
     geocode_and_configure,
 )
-from app.core.projection_converter import acres_to_sim_bounds, geocode_location
+from app.core.projection_converter import acres_to_sim_bounds
+from app.core.resolve_location import ResolvedLocation
 
 
 def test_acres_to_sim_bounds_small_area() -> None:
@@ -31,32 +32,22 @@ def test_acres_to_sim_bounds_rejects_non_positive() -> None:
         acres_to_sim_bounds(0.0, 0.0, 0.0)
 
 
-@patch("app.core.projection_converter.Nominatim")
-def test_geocode_location_success(mock_nominatim: MagicMock) -> None:
-    mock_geo = MagicMock()
-    mock_geo.latitude = 33.749
-    mock_geo.longitude = -84.388
-    mock_nominatim.return_value.geocode.return_value = mock_geo
-
-    lat, lon = geocode_location("Atlanta, GA")
-    assert lat == 33.749
-    assert lon == -84.388
-
-
-@patch("app.core.projection_converter.Nominatim")
-def test_geocode_location_failure(mock_nominatim: MagicMock) -> None:
-    mock_nominatim.return_value.geocode.return_value = None
-    with pytest.raises(ValueError, match="Could not geocode"):
-        geocode_location("nowhereonthemapxyz123")
-
-
-@patch("app.agent.tools.geocode_location")
 @patch("app.agent.tools.acres_to_sim_bounds")
-def test_geocode_and_configure(
+@pytest.mark.asyncio
+async def test_geocode_and_configure(
     mock_bounds: MagicMock,
-    mock_geocode: MagicMock,
+    monkeypatch,
 ) -> None:
-    mock_geocode.return_value = (33.749, -84.388)
+    async def fake_resolve(location):
+        return ResolvedLocation(
+            status="resolved",
+            lat=33.749,
+            lon=-84.388,
+            label="Atlanta, Georgia, USA",
+            query=location,
+        )
+
+    monkeypatch.setattr("app.agent.tools.resolve_location", fake_resolve)
     mock_bounds.return_value = {
         "center_lat": 33.749,
         "center_lon": -84.388,
@@ -66,8 +57,11 @@ def test_geocode_and_configure(
         "cellSpaceDimension": 50,
     }
 
-    out = geocode_and_configure.invoke({"location": "Atlanta, GA", "acres": 50.0})
+    out = await geocode_and_configure.ainvoke(
+        {"location": "Atlanta, GA", "acres": 50.0}
+    )
     parsed = json.loads(out)
+    assert parsed["ok"] is True
     assert parsed["center_lat"] == 33.749
     assert parsed["cellResolution"] == 30
 

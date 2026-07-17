@@ -22,9 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.agent.agent import run_agent
-from app.api.cors_config import ALLOWED_ORIGINS
 from app.api.routes_map import router as map_router
 from app.browser.pool import pool
+from app.config import get_settings
+from app.core.geocoder import start_geocoder, stop_geocoder
 from app.core.rate_limiter import RateLimitExceededError, chat_rate_limiter, llm_token_budget
 from app.core.session_tokens import issue_session_token, is_valid_session
 
@@ -37,12 +38,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
+    settings.validate_runtime()
     logger.info("firesim-ai API starting up")
-    await pool.start()
-    logger.info("BrowserSessionPool started")
-    yield
-    await pool.stop()
-    logger.info("firesim-ai API shutting down")
+    await start_geocoder(settings)
+    try:
+        await pool.start()
+        logger.info("BrowserSessionPool started")
+        yield
+    finally:
+        await pool.stop()
+        await stop_geocoder()
+        logger.info("firesim-ai API shutting down")
 
 
 app = FastAPI(
@@ -54,7 +61,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=get_settings().cors_origin_list,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "X-Session-Id"],
@@ -84,6 +91,10 @@ class ChatResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+    browser_connected: bool
+    active_contexts: int
+    max_contexts: int
+    waiting_requests: int
 
 
 def require_session_id(x_session_id: Optional[str] = Header(default=None)) -> str:
@@ -94,8 +105,11 @@ def require_session_id(x_session_id: Optional[str] = Header(default=None)) -> st
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
 async def health():
-    """Quick sanity check — confirms the API process is alive."""
-    return HealthResponse(status="ok", version=app.version)
+    """Readiness check for the API and its shared Chromium process."""
+    readiness = pool.readiness()
+    if not readiness["browser_connected"]:
+        raise HTTPException(status_code=503, detail="Browser pool is not ready")
+    return HealthResponse(status="ready", version=app.version, **readiness)
 
 
 @app.post("/api/session", response_model=SessionResponse, tags=["auth"])
@@ -132,7 +146,7 @@ async def chat(req: ChatRequest, session_id: str = Depends(require_session_id)):
     logger.info("session=%s… | user: %s", session_id[:8], req.message[:120])
 
     try:
-        reply, tokens_used = run_agent(
+        reply, tokens_used = await run_agent(
             user_message=req.message,
             thread_id=session_id,
         )
