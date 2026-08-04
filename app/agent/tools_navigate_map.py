@@ -87,6 +87,19 @@ async def navigate_map(
         MapNotReadyError,
         RateLimitExceededError,
     ) as exc:
-        raise ValueError(str(exc)) from exc
+        # Return a structured failure instead of raising: the browser-side
+        # actuation failing (map not loaded, pool busy, etc.) is a transient
+        # operational condition, not a reason to fail the whole chat turn.
+        # The agent narrates this in plain language, same as resolve_location's
+        # ambiguous/not_found statuses.
+        return json.dumps(
+            {
+                "ok": False,
+                "error": str(exc),
+                "lat": lat,
+                "lon": lon,
+                "label": grant.label,
+            }
+        )
 
     return json.dumps(result)

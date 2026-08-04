@@ -13,9 +13,17 @@ Run locally:
   uvicorn api.main:app --reload --port 8000
 """
 
+import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import Optional
+
+if sys.platform == "win32":
+    # Playwright spawns its Node driver via subprocess_exec, which
+    # SelectorEventLoop (sometimes picked by uvicorn --reload on Windows)
+    # does not support. Force Proactor before anything creates a loop.
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

@@ -101,7 +101,13 @@ async def test_zoom_none_passed_through_for_pool_to_default(fake_pool_navigate):
 
 
 @pytest.mark.asyncio
-async def test_pool_error_surfaces_as_tool_error(monkeypatch):
+async def test_pool_error_returns_structured_failure_instead_of_raising(monkeypatch):
+    """
+    Pool errors (map not ready, session dead, pool exhausted, rate limited)
+    are transient operational conditions, not reasons to blow up the whole
+    chat turn — the tool returns ok:False so the agent can narrate it,
+    instead of raising into an unhandled 500 (see api/main.py's /chat).
+    """
     from app.browser.pool import NoActiveSessionError
 
     async def raising_navigate(session_id, lat, lon, zoom=None, label=None, **kwargs):
@@ -109,7 +115,9 @@ async def test_pool_error_surfaces_as_tool_error(monkeypatch):
 
     monkeypatch.setattr(tools_navigate_map.pool, "navigate", raising_navigate)
 
-    with pytest.raises(Exception):
-        await navigate_map.ainvoke(
-            {"lat": 34.2368, "lon": -84.4908, "zoom": 13}, config=_config()
-        )
+    raw = await navigate_map.ainvoke(
+        {"lat": 34.2368, "lon": -84.4908, "zoom": 13}, config=_config()
+    )
+    result = json.loads(raw)
+    assert result["ok"] is False
+    assert "session dead" in result["error"]

@@ -10,7 +10,7 @@ Usage:
 
 The script:
   1. Opens FireMapSim in a visible browser window.
-  2. Injects a full-height right sidebar so the agent is visible on-screen.
+  2. Injects a collapsed floating launcher button; click it to open the sidebar.
   3. Pans the map to the project location via Mapbox GL (Vue FireMap component).
   4. Sends each demo message to the local firesim-ai API (localhost:8000/chat).
   5. Parses the agent reply to detect which UI element to highlight.
@@ -23,6 +23,7 @@ Requires:
     playwright install chromium
 """
 
+import sys
 import os
 import re
 import time
@@ -30,6 +31,8 @@ import textwrap
 import requests
 from playwright.sync_api import sync_playwright, Page, Locator
 
+# Add the project root to sys.path so we can import app.config
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -133,12 +136,29 @@ def firesim_url(lat: float, lng: float, zoom: int) -> str:
 
 PAN_MAP_JS = """
 ([lat, lng, zoom]) => {
-    function findFireMap(vm) {
-        if (!vm) return null;
-        if (vm.$options && vm.$options.name === 'FireMap' && vm.map) return vm;
+    // #app.__vue__ is unreliable: when a descendant component's root render
+    // element happens to be the same DOM node as #app (a Vue 2 quirk), that
+    // descendant's instance overwrites __vue__ there, and its $children may
+    // be empty — the real app tree is orphaned from that starting point.
+    // Scan every element instead of trusting #app to hold the true root.
+    function findFireMapAnywhere() {
+        const all = document.querySelectorAll('*');
+        for (const el of all) {
+            const vm = el.__vue__;
+            if (vm && vm.$options && vm.$options.name === 'FireMap') return vm;
+        }
+        return null;
+    }
+
+    // The live Mapbox instance isn't necessarily on FireMap itself — it may
+    // live on a nested child component (e.g. a GlMap wrapper). Search the
+    // whole subtree for whichever component actually holds it.
+    function findMapInstance(vm, depth) {
+        if (!vm || depth > 12) return null;
+        if (vm.map && typeof vm.map.jumpTo === 'function') return vm.map;
         const kids = vm.$children || [];
         for (let i = 0; i < kids.length; i++) {
-            const found = findFireMap(kids[i]);
+            const found = findMapInstance(kids[i], depth + 1);
             if (found) return found;
         }
         return null;
@@ -158,9 +178,9 @@ PAN_MAP_JS = """
         return null;
     }
 
-    const root = document.querySelector('#app');
-    const fireMap = findFireMap(root && root.__vue__);
-    let map = fireMap && fireMap.map ? fireMap.map : findMapboxOnDom();
+    const fireMap = findFireMapAnywhere();
+    let map = fireMap ? findMapInstance(fireMap, 0) : null;
+    if (!map) map = findMapboxOnDom();
 
     if (!map) {
         return { success: false, reason: 'Mapbox map instance not ready' };
@@ -216,14 +236,11 @@ def pan_map_to_project(
 # ---------------------------------------------------------------------------
 
 def inject_sidebar(page: Page) -> None:
-    """Inject a full-height right sidebar and shift page content left."""
+    """Inject a collapsed floating launcher button plus a hidden right sidebar panel."""
     try:
         page.evaluate(
             """(width) => {
                 if (document.getElementById('__fsai_sidebar__')) return;
-
-                document.documentElement.style.setProperty('margin-right', width + 'px', 'important');
-                document.body.style.setProperty('margin-right', width + 'px', 'important');
 
                 const panel = document.createElement('div');
                 panel.id = '__fsai_sidebar__';
@@ -238,20 +255,23 @@ def inject_sidebar(page: Page) -> None:
                     'z-index: 2147483647',
                     'display: flex',
                     'flex-direction: column',
-                    'background: #1e1e1e',
+                    'background: #ffffff',
                     'border-left: 3px solid #ff6600',
-                    'box-shadow: -4px 0 24px rgba(0,0,0,0.35)',
+                    'box-shadow: -4px 0 24px rgba(0,0,0,0.18)',
                     'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
                     'font-size: 14px',
-                    'color: #fff',
+                    'color: #1a1a1a',
                     'overflow: hidden',
                     'box-sizing: border-box',
+                    'transform: translateX(100%)',
+                    'transition: transform 0.25s ease',
+                    'visibility: hidden',
                 ].join(' !important; ') + ' !important');
 
                 const header = document.createElement('div');
                 header.setAttribute('style', [
                     'all: initial', 'display: flex', 'align-items: center', 'gap: 8px',
-                    'padding: 12px 16px', 'background: #2a2a2a', 'border-bottom: 1px solid #333',
+                    'padding: 12px 16px', 'background: #f7f7f7', 'border-bottom: 1px solid #e5e5e5',
                     'font-family: -apple-system, Segoe UI, Roboto, sans-serif', 'flex-shrink: 0',
                     'box-sizing: border-box',
                 ].join(' !important; ') + ' !important');
@@ -259,14 +279,20 @@ def inject_sidebar(page: Page) -> None:
                 const dot = document.createElement('span');
                 dot.setAttribute('style', 'all:initial !important; width:10px !important; height:10px !important; border-radius:50% !important; background:#ff6600 !important; display:inline-block !important;');
                 const title = document.createElement('span');
-                title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#fff !important;');
+                title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#1a1a1a !important;');
                 title.textContent = 'FireMapSim AI Co-pilot';
                 const stepBadge = document.createElement('span');
                 stepBadge.id = '__fsai_step_badge__';
-                stepBadge.setAttribute('style', 'all:initial !important; margin-left:auto !important; font-size:11px !important; color:#aaa !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                stepBadge.setAttribute('style', 'all:initial !important; margin-left:auto !important; font-size:11px !important; color:#888 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                const collapseBtn = document.createElement('button');
+                collapseBtn.setAttribute('style', 'all:initial !important; margin-left:8px !important; background:transparent !important; border:none !important; color:#888 !important; font-size:18px !important; line-height:1 !important; cursor:pointer !important; padding:0 2px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                collapseBtn.textContent = String.fromCharCode(10005);
+                collapseBtn.title = 'Collapse';
+                collapseBtn.onclick = () => window.__fsai_toggle__(false);
                 header.appendChild(dot);
                 header.appendChild(title);
                 header.appendChild(stepBadge);
+                header.appendChild(collapseBtn);
 
                 const msgArea = document.createElement('div');
                 msgArea.id = '__fsai_msg_area__';
@@ -274,12 +300,12 @@ def inject_sidebar(page: Page) -> None:
                     'all: initial', 'flex: 1 1 auto', 'overflow-y: auto', 'overflow-x: hidden',
                     'padding: 16px', 'display: flex', 'flex-direction: column', 'gap: 10px',
                     'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
-                    'font-size: 14px', 'color: #e0e0e0', 'line-height: 1.55',
+                    'font-size: 14px', 'color: #333', 'line-height: 1.55',
                     'min-height: 0', 'box-sizing: border-box',
                 ].join(' !important; ') + ' !important');
 
                 const placeholder = document.createElement('div');
-                placeholder.setAttribute('style', 'all:initial !important; color:#666 !important; font-size:13px !important; text-align:center !important; padding:24px 0 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                placeholder.setAttribute('style', 'all:initial !important; color:#999 !important; font-size:13px !important; text-align:center !important; padding:24px 0 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                 placeholder.textContent = 'Starting guided walkthrough...';
                 msgArea.appendChild(placeholder);
 
@@ -287,7 +313,7 @@ def inject_sidebar(page: Page) -> None:
                 btnRow.id = '__fsai_btn_row__';
                 btnRow.setAttribute('style', [
                     'all: initial', 'display: flex', 'gap: 8px', 'justify-content: flex-end',
-                    'padding: 12px 16px', 'background: #2a2a2a', 'border-top: 1px solid #333',
+                    'padding: 12px 16px', 'background: #f7f7f7', 'border-top: 1px solid #e5e5e5',
                     'flex-shrink: 0', 'box-sizing: border-box',
                 ].join(' !important; ') + ' !important');
 
@@ -295,12 +321,56 @@ def inject_sidebar(page: Page) -> None:
                 panel.appendChild(msgArea);
                 panel.appendChild(btnRow);
                 (document.body || document.documentElement).appendChild(panel);
+
+                const launcher = document.createElement('button');
+                launcher.id = '__fsai_launcher__';
+                launcher.setAttribute('style', [
+                    'all: initial', 'position: fixed', 'bottom: 24px', 'right: 24px',
+                    'width: 56px', 'height: 56px', 'border-radius: 50%',
+                    'background: #ff6600', 'box-shadow: 0 4px 16px rgba(0,0,0,0.3)',
+                    'display: flex', 'align-items: center', 'justify-content: center',
+                    'cursor: pointer', 'z-index: 2147483647', 'border: none',
+                    'font-size: 26px', 'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+                launcher.title = 'Open FireMapSim AI Co-pilot';
+                launcher.textContent = String.fromCodePoint(128293);
+
+                const badge = document.createElement('span');
+                badge.id = '__fsai_badge__';
+                badge.setAttribute('style', 'all:initial !important; position:absolute !important; top:-2px !important; right:-2px !important; width:14px !important; height:14px !important; border-radius:50% !important; background:#ff3b30 !important; border:2px solid #fff !important; display:none !important; box-sizing:border-box !important;');
+                launcher.appendChild(badge);
+                launcher.onclick = () => window.__fsai_toggle__(true);
+                (document.body || document.documentElement).appendChild(launcher);
+
+                window.__fsai_expanded__ = false;
+                window.__fsai_toggle__ = function(expand) {
+                    const p = document.getElementById('__fsai_sidebar__');
+                    const l = document.getElementById('__fsai_launcher__');
+                    const b = document.getElementById('__fsai_badge__');
+                    if (!p || !l) return;
+                    window.__fsai_expanded__ = expand;
+                    if (expand) {
+                        document.documentElement.style.setProperty('margin-right', width + 'px', 'important');
+                        document.body.style.setProperty('margin-right', width + 'px', 'important');
+                        p.style.setProperty('visibility', 'visible', 'important');
+                        p.style.setProperty('transform', 'translateX(0)', 'important');
+                        l.style.setProperty('display', 'none', 'important');
+                        if (b) b.style.setProperty('display', 'none', 'important');
+                    } else {
+                        document.documentElement.style.setProperty('margin-right', '0px', 'important');
+                        document.body.style.setProperty('margin-right', '0px', 'important');
+                        p.style.setProperty('transform', 'translateX(100%)', 'important');
+                        p.style.setProperty('visibility', 'hidden', 'important');
+                        l.style.setProperty('display', 'flex', 'important');
+                    }
+                    window.dispatchEvent(new Event('resize'));
+                };
+
                 window.__guide_action__ = null;
-                window.dispatchEvent(new Event('resize'));
             }""",
             SIDEBAR_WIDTH,
         )
-        print("  -> Sidebar injected.")
+        print("  -> Sidebar injected (collapsed).")
     except Exception as exc:
         print(f"  !  Sidebar injection failed: {exc}")
 
@@ -349,7 +419,7 @@ def update_sidebar(page: Page, turn: int, total: int, reply: str, is_last: bool)
                     for (const line of lines) {
                         if (!line.trim()) continue;
                         const p = document.createElement('div');
-                        p.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#e0e0e0 !important; line-height:1.55 !important; display:block !important; margin-bottom:6px !important; word-wrap:break-word !important; overflow-wrap:break-word !important;');
+                        p.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#333 !important; line-height:1.55 !important; display:block !important; margin-bottom:6px !important; word-wrap:break-word !important; overflow-wrap:break-word !important;');
                         p.textContent = line;
                         area.appendChild(p);
                     }
@@ -360,7 +430,7 @@ def update_sidebar(page: Page, turn: int, total: int, reply: str, is_last: bool)
                 if (btnRow) {
                     btnRow.innerHTML = '';
                     const quitBtn = document.createElement('button');
-                    quitBtn.setAttribute('style', 'all:initial !important; background:transparent !important; color:#aaa !important; border:1px solid #555 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; padding:6px 12px !important; border-radius:6px !important; cursor:pointer !important;');
+                    quitBtn.setAttribute('style', 'all:initial !important; background:transparent !important; color:#555 !important; border:1px solid #ccc !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; padding:6px 12px !important; border-radius:6px !important; cursor:pointer !important;');
                     quitBtn.textContent = 'Quit';
                     quitBtn.onclick = () => { window.__guide_action__ = 'quit'; };
                     const nextBtn = document.createElement('button');
@@ -369,6 +439,11 @@ def update_sidebar(page: Page, turn: int, total: int, reply: str, is_last: bool)
                     nextBtn.onclick = () => { window.__guide_action__ = 'next'; };
                     btnRow.appendChild(quitBtn);
                     btnRow.appendChild(nextBtn);
+                }
+
+                if (!window.__fsai_expanded__) {
+                    const badge = document.getElementById('__fsai_badge__');
+                    if (badge) badge.style.setProperty('display', 'block', 'important');
                 }
             } catch (e) {
                 console.error('sidebar update error:', e);
@@ -399,11 +474,11 @@ def show_sidebar_end(page: Page, completed: bool) -> None:
                 if (area) {
                     area.innerHTML = '';
                     const h = document.createElement('div');
-                    h.setAttribute('style', 'all:initial !important; font-size:14px !important; font-weight:600 !important; color:#fff !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                    h.setAttribute('style', 'all:initial !important; font-size:14px !important; font-weight:600 !important; color:#1a1a1a !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                     h.textContent = heading;
                     area.appendChild(h);
                     const b = document.createElement('div');
-                    b.setAttribute('style', 'all:initial !important; font-size:13px !important; color:#aaa !important; margin-top:8px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                    b.setAttribute('style', 'all:initial !important; font-size:13px !important; color:#888 !important; margin-top:8px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                     b.textContent = body;
                     area.appendChild(b);
                 }
@@ -415,6 +490,11 @@ def show_sidebar_end(page: Page, completed: bool) -> None:
                     closeBtn.textContent = 'Close browser';
                     closeBtn.onclick = () => { window.__guide_action__ = 'close'; };
                     btnRow.appendChild(closeBtn);
+                }
+
+                if (!window.__fsai_expanded__) {
+                    const badge = document.getElementById('__fsai_badge__');
+                    if (badge) badge.style.setProperty('display', 'block', 'important');
                 }
             } catch (e) {
                 window.__guide_action__ = 'close';
@@ -590,7 +670,7 @@ def main() -> None:
         # Let the Vue app and Mapbox finish initializing.
         time.sleep(2)
 
-        # 1. Inject the right sidebar (visible for the whole session).
+        # 1. Inject the collapsed launcher button + hidden sidebar panel.
         inject_sidebar(page)
 
         # 2. Pan the map to the Canton, GA project location immediately.
@@ -599,7 +679,8 @@ def main() -> None:
         time.sleep(1)  # let the animation settle
 
         print("Starting guided walkthrough.")
-        print("Use the 'Next step' / 'Quit' buttons in the sidebar to control pacing.\n")
+        print("Click the orange button (bottom-right) to open the sidebar; use its")
+        print("'Next step' / 'Quit' buttons to control pacing.\n")
 
         total = len(DEMO_STEPS)
         active_selector: str | None = None

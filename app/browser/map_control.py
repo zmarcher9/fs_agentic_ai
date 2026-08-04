@@ -22,12 +22,29 @@ from typing import Any, Literal
 # MapNotReadyError. Supports flyTo | jumpTo via `method`.
 _PAN_MAP_JS = """
 ([lng, lat, zoom, method]) => {
-    function findFireMap(vm) {
-        if (!vm) return null;
-        if (vm.$options && vm.$options.name === 'FireMap' && vm.map) return vm;
+    // #app.__vue__ is unreliable: when a descendant component's root render
+    // element happens to be the same DOM node as #app (a Vue 2 quirk), that
+    // descendant's instance overwrites __vue__ there, and its $children may
+    // be empty — the real app tree is orphaned from that starting point.
+    // Scan every element instead of trusting #app to hold the true root.
+    function findFireMapAnywhere() {
+        const all = document.querySelectorAll('*');
+        for (const el of all) {
+            const vm = el.__vue__;
+            if (vm && vm.$options && vm.$options.name === 'FireMap') return vm;
+        }
+        return null;
+    }
+
+    // The live Mapbox instance isn't necessarily on FireMap itself — it may
+    // live on a nested child component (e.g. a GlMap wrapper). Search the
+    // whole subtree for whichever component actually holds it.
+    function findMapInstance(vm, depth) {
+        if (!vm || depth > 12) return null;
+        if (vm.map && typeof vm.map.jumpTo === 'function') return vm.map;
         const kids = vm.$children || [];
         for (let i = 0; i < kids.length; i++) {
-            const found = findFireMap(kids[i]);
+            const found = findMapInstance(kids[i], depth + 1);
             if (found) return found;
         }
         return null;
@@ -47,9 +64,9 @@ _PAN_MAP_JS = """
         return null;
     }
 
-    const root = document.querySelector('#app');
-    const fireMap = findFireMap(root && root.__vue__);
-    let map = fireMap && fireMap.map ? fireMap.map : findMapboxOnDom();
+    const fireMap = findFireMapAnywhere();
+    let map = fireMap ? findMapInstance(fireMap, 0) : null;
+    if (!map) map = findMapboxOnDom();
 
     if (!map) {
         throw new Error('No Vue FireMap / Mapbox instance found on page');
