@@ -1,9 +1,10 @@
 """
 playwright/guide.py
 
-FireMapSim UI walkthrough guide.
-Launches or attaches to https://firesim.cs.gsu.edu/,
-then highlights UI fields as the agent narrates each setup step.
+FireMapSim live co-pilot.
+Launches or attaches to the real FireMapSim page (FIREMAP_URL), injects a
+free-text chat sidebar wired to the local firesim-ai API, and highlights
+the UI control the agent is talking about as you chat.
 
 Usage:
     python playwright/guide.py
@@ -12,11 +13,12 @@ The script:
   1. Opens FireMapSim in a visible browser window.
   2. Injects a collapsed floating launcher button; click it to open the sidebar.
   3. Pans the map to the project location via Mapbox GL (Vue FireMap component).
-  4. Sends each demo message to the local firesim-ai API (localhost:8000/chat).
-  5. Parses the agent reply to detect which UI element to highlight.
+  4. Lets you type any message into the sidebar and sends it to the local
+     firesim-ai API (localhost:8000/chat).
+  5. Parses the agent reply to detect which UI element it's talking about.
   6. Scrolls to + visually highlights that element on the live page.
-  7. Shows agent responses in the sidebar (no raw JSON, no truncation).
-  8. Waits for the user to click "Next step" / "Quit" before continuing.
+  7. Appends the agent's reply to the chat transcript in the sidebar.
+  8. Keeps chatting until you close the browser window.
 
 Requires:
     pip install playwright requests
@@ -54,6 +56,11 @@ PROJECT_ZOOM = 13  # zoom level — 13 gives a good neighbourhood view
 
 # Sidebar width — main page content is shifted left to make room.
 SIDEBAR_WIDTH = 360
+
+WELCOME_MESSAGE = (
+    "Ask me anything about setting up your prescribed burn simulation - "
+    "location, wind, cell resolution, ignition lines, and more."
+)
 
 # ---------------------------------------------------------------------------
 # Styles
@@ -100,6 +107,8 @@ KEYWORD_MAP: list[tuple[str, str]] = [
     # Most specific UI control names first; ignition before generic "duration".
     ("set line ignition",    "set_line_ignition"),
     ("set point ignition",   "set_point_ignition"),
+    ("line ignition",        "set_line_ignition"),
+    ("point ignition",       "set_point_ignition"),
     ("set fuel brake",       "set_fuel_brake"),
     ("set project location", "set_project_location"),
     ("cell resolution",      "cell_resolution"),
@@ -236,10 +245,16 @@ def pan_map_to_project(
 # ---------------------------------------------------------------------------
 
 def inject_sidebar(page: Page) -> None:
-    """Inject a collapsed floating launcher button plus a hidden right sidebar panel."""
+    """
+    Inject a collapsed floating launcher button plus a hidden right sidebar
+    chat panel: a scrolling transcript, a text input, and a Send button.
+    Submitting a message sets window.__fsai_pending__; main() polls for it,
+    calls the API, then hands the reply to window.__fsai_append_agent__.
+    """
     try:
         page.evaluate(
-            """(width) => {
+            """(args) => {
+                const [width, welcome] = args;
                 if (document.getElementById('__fsai_sidebar__')) return;
 
                 const panel = document.createElement('div');
@@ -281,17 +296,13 @@ def inject_sidebar(page: Page) -> None:
                 const title = document.createElement('span');
                 title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#1a1a1a !important;');
                 title.textContent = 'FireMapSim AI Co-pilot';
-                const stepBadge = document.createElement('span');
-                stepBadge.id = '__fsai_step_badge__';
-                stepBadge.setAttribute('style', 'all:initial !important; margin-left:auto !important; font-size:11px !important; color:#888 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                 const collapseBtn = document.createElement('button');
-                collapseBtn.setAttribute('style', 'all:initial !important; margin-left:8px !important; background:transparent !important; border:none !important; color:#888 !important; font-size:18px !important; line-height:1 !important; cursor:pointer !important; padding:0 2px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
+                collapseBtn.setAttribute('style', 'all:initial !important; margin-left:auto !important; background:transparent !important; border:none !important; color:#888 !important; font-size:18px !important; line-height:1 !important; cursor:pointer !important; padding:0 2px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
                 collapseBtn.textContent = String.fromCharCode(10005);
                 collapseBtn.title = 'Collapse';
                 collapseBtn.onclick = () => window.__fsai_toggle__(false);
                 header.appendChild(dot);
                 header.appendChild(title);
-                header.appendChild(stepBadge);
                 header.appendChild(collapseBtn);
 
                 const msgArea = document.createElement('div');
@@ -304,22 +315,41 @@ def inject_sidebar(page: Page) -> None:
                     'min-height: 0', 'box-sizing: border-box',
                 ].join(' !important; ') + ' !important');
 
-                const placeholder = document.createElement('div');
-                placeholder.setAttribute('style', 'all:initial !important; color:#999 !important; font-size:13px !important; text-align:center !important; padding:24px 0 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
-                placeholder.textContent = 'Starting guided walkthrough...';
-                msgArea.appendChild(placeholder);
-
-                const btnRow = document.createElement('div');
-                btnRow.id = '__fsai_btn_row__';
-                btnRow.setAttribute('style', [
-                    'all: initial', 'display: flex', 'gap: 8px', 'justify-content: flex-end',
+                const inputRow = document.createElement('div');
+                inputRow.id = '__fsai_input_row__';
+                inputRow.setAttribute('style', [
+                    'all: initial', 'display: flex', 'gap: 8px', 'align-items: center',
                     'padding: 12px 16px', 'background: #f7f7f7', 'border-top: 1px solid #e5e5e5',
                     'flex-shrink: 0', 'box-sizing: border-box',
                 ].join(' !important; ') + ' !important');
 
+                const input = document.createElement('input');
+                input.id = '__fsai_input__';
+                input.type = 'text';
+                input.placeholder = 'Ask about your burn setup...';
+                input.setAttribute('style', [
+                    'all: initial', 'flex: 1 1 auto', 'min-width: 0', 'padding: 8px 10px',
+                    'border: 1px solid #ccc', 'border-radius: 6px',
+                    'font-family: -apple-system, Segoe UI, Roboto, sans-serif', 'font-size: 13px',
+                    'color: #1a1a1a', 'background: #ffffff', 'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+
+                const sendBtn = document.createElement('button');
+                sendBtn.id = '__fsai_send__';
+                sendBtn.textContent = 'Send';
+                sendBtn.setAttribute('style', [
+                    'all: initial', 'background: #ff6600', 'color: #fff', 'border: none',
+                    'font-family: -apple-system, Segoe UI, Roboto, sans-serif', 'font-size: 12px',
+                    'font-weight: 600', 'padding: 8px 14px', 'border-radius: 6px', 'cursor: pointer',
+                    'flex-shrink: 0', 'box-sizing: border-box',
+                ].join(' !important; ') + ' !important');
+
+                inputRow.appendChild(input);
+                inputRow.appendChild(sendBtn);
+
                 panel.appendChild(header);
                 panel.appendChild(msgArea);
-                panel.appendChild(btnRow);
+                panel.appendChild(inputRow);
                 (document.body || document.documentElement).appendChild(panel);
 
                 const launcher = document.createElement('button');
@@ -356,6 +386,8 @@ def inject_sidebar(page: Page) -> None:
                         p.style.setProperty('transform', 'translateX(0)', 'important');
                         l.style.setProperty('display', 'none', 'important');
                         if (b) b.style.setProperty('display', 'none', 'important');
+                        const inp = document.getElementById('__fsai_input__');
+                        if (inp) inp.focus();
                     } else {
                         document.documentElement.style.setProperty('margin-right', '0px', 'important');
                         document.body.style.setProperty('margin-right', '0px', 'important');
@@ -366,9 +398,107 @@ def inject_sidebar(page: Page) -> None:
                     window.dispatchEvent(new Event('resize'));
                 };
 
-                window.__guide_action__ = null;
+                // ---- chat transcript + input wiring ----------------------
+
+                window.__fsai_pending__ = null;   // set by trySend(); read+cleared by Python
+                window.__fsai_busy__ = false;      // true while waiting on an API reply
+
+                function scrollBottom() {
+                    const area = document.getElementById('__fsai_msg_area__');
+                    if (area) area.scrollTop = area.scrollHeight;
+                }
+
+                function appendBubble(text, role) {
+                    const area = document.getElementById('__fsai_msg_area__');
+                    if (!area) return;
+                    const wrap = document.createElement('div');
+                    wrap.setAttribute('style', [
+                        'all: initial', 'display: flex',
+                        'justify-content: ' + (role === 'user' ? 'flex-end' : 'flex-start'),
+                    ].join(' !important; ') + ' !important');
+                    const bg = role === 'user' ? '#ff6600' : (role === 'error' ? '#fdecea' : '#f1f1f1');
+                    const color = role === 'user' ? '#ffffff' : (role === 'error' ? '#b3261e' : '#1a1a1a');
+                    const bubble = document.createElement('div');
+                    bubble.setAttribute('style', [
+                        'all: initial', 'max-width: 85%', 'padding: 8px 12px', 'border-radius: 12px',
+                        'background: ' + bg, 'color: ' + color,
+                        'font-family: -apple-system, Segoe UI, Roboto, sans-serif', 'font-size: 13px',
+                        'line-height: 1.5', 'white-space: pre-wrap', 'word-wrap: break-word',
+                        'box-sizing: border-box',
+                    ].join(' !important; ') + ' !important');
+                    bubble.textContent = text;
+                    wrap.appendChild(bubble);
+                    area.appendChild(wrap);
+                    scrollBottom();
+                }
+
+                function showTyping() {
+                    removeTyping();
+                    const area = document.getElementById('__fsai_msg_area__');
+                    if (!area) return;
+                    const wrap = document.createElement('div');
+                    wrap.id = '__fsai_typing__';
+                    wrap.setAttribute('style', 'all:initial !important; display:flex !important; justify-content:flex-start !important;');
+                    const bubble = document.createElement('div');
+                    bubble.setAttribute('style', 'all:initial !important; padding:8px 12px !important; border-radius:12px !important; background:#f1f1f1 !important; color:#999 !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-style:italic !important;');
+                    bubble.textContent = 'Thinking...';
+                    wrap.appendChild(bubble);
+                    area.appendChild(wrap);
+                    scrollBottom();
+                }
+
+                function removeTyping() {
+                    const t = document.getElementById('__fsai_typing__');
+                    if (t) t.remove();
+                }
+
+                function setBusy(busy) {
+                    window.__fsai_busy__ = busy;
+                    const inp = document.getElementById('__fsai_input__');
+                    const btn = document.getElementById('__fsai_send__');
+                    if (inp) inp.disabled = busy;
+                    if (btn) btn.disabled = busy;
+                    if (busy) showTyping(); else removeTyping();
+                }
+
+                function flagUnread() {
+                    if (!window.__fsai_expanded__) {
+                        const b = document.getElementById('__fsai_badge__');
+                        if (b) b.style.setProperty('display', 'block', 'important');
+                    }
+                }
+
+                window.__fsai_append_agent__ = function(text) {
+                    setBusy(false);
+                    appendBubble(text, 'agent');
+                    flagUnread();
+                };
+                window.__fsai_append_error__ = function(text) {
+                    setBusy(false);
+                    appendBubble(text, 'error');
+                    flagUnread();
+                };
+
+                function trySend() {
+                    if (window.__fsai_busy__) return;
+                    const inp = document.getElementById('__fsai_input__');
+                    if (!inp) return;
+                    const val = (inp.value || '').trim();
+                    if (!val) return;
+                    inp.value = '';
+                    appendBubble(val, 'user');
+                    setBusy(true);
+                    window.__fsai_pending__ = val;
+                }
+
+                sendBtn.onclick = trySend;
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); trySend(); }
+                });
+
+                appendBubble(welcome, 'agent');
             }""",
-            SIDEBAR_WIDTH,
+            [SIDEBAR_WIDTH, WELCOME_MESSAGE],
         )
         print("  -> Sidebar injected (collapsed).")
     except Exception as exc:
@@ -391,117 +521,20 @@ def clean_for_display(text: str) -> str:
     return text.strip()
 
 
-def update_sidebar(page: Page, turn: int, total: int, reply: str, is_last: bool) -> None:
-    """Update the sidebar with the current step text and Next/Quit buttons."""
-    display_text = clean_for_display(reply)
-    next_label = "Finish" if is_last else "Next step →"
-
-    # Playwright JSON-serializes arguments — pass plain strings, no manual escaping.
-    page.evaluate(
-        """(data) => {
-            const { msg, turn, total, nextLabel } = data;
-            try {
-                window.__guide_action__ = null;
-
-                const badge = document.getElementById('__fsai_step_badge__');
-                if (badge) badge.textContent = 'Step ' + turn + ' / ' + total;
-
-                const area = document.getElementById('__fsai_msg_area__');
-                if (area) {
-                    area.innerHTML = '';
-
-                    const label = document.createElement('div');
-                    label.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:11px !important; font-weight:600 !important; color:#ff6600 !important; text-transform:uppercase !important; letter-spacing:0.5px !important; margin-bottom:4px !important;');
-                    label.textContent = 'Step ' + turn + ' of ' + total;
-                    area.appendChild(label);
-
-                    const lines = msg.split('\\n');
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
-                        const p = document.createElement('div');
-                        p.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; color:#333 !important; line-height:1.55 !important; display:block !important; margin-bottom:6px !important; word-wrap:break-word !important; overflow-wrap:break-word !important;');
-                        p.textContent = line;
-                        area.appendChild(p);
-                    }
-                    area.scrollTop = 0;
-                }
-
-                const btnRow = document.getElementById('__fsai_btn_row__');
-                if (btnRow) {
-                    btnRow.innerHTML = '';
-                    const quitBtn = document.createElement('button');
-                    quitBtn.setAttribute('style', 'all:initial !important; background:transparent !important; color:#555 !important; border:1px solid #ccc !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; padding:6px 12px !important; border-radius:6px !important; cursor:pointer !important;');
-                    quitBtn.textContent = 'Quit';
-                    quitBtn.onclick = () => { window.__guide_action__ = 'quit'; };
-                    const nextBtn = document.createElement('button');
-                    nextBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important;');
-                    nextBtn.textContent = nextLabel;
-                    nextBtn.onclick = () => { window.__guide_action__ = 'next'; };
-                    btnRow.appendChild(quitBtn);
-                    btnRow.appendChild(nextBtn);
-                }
-
-                if (!window.__fsai_expanded__) {
-                    const badge = document.getElementById('__fsai_badge__');
-                    if (badge) badge.style.setProperty('display', 'block', 'important');
-                }
-            } catch (e) {
-                console.error('sidebar update error:', e);
-                window.__guide_action__ = 'next';
-            }
-        }""",
-        {"msg": display_text, "turn": turn, "total": total, "nextLabel": next_label},
-    )
+def wait_for_user_message(page: Page) -> str:
+    """Block until the sidebar's Send button (or Enter) sets a pending message."""
+    page.wait_for_function("() => window.__fsai_pending__ !== null", timeout=0)
+    msg = page.evaluate("() => window.__fsai_pending__")
+    page.evaluate("() => { window.__fsai_pending__ = null; }")
+    return msg
 
 
-def show_sidebar_end(page: Page, completed: bool) -> None:
-    """Show a final completion message in the sidebar."""
-    heading = "Walkthrough complete!" if completed else "Walkthrough stopped."
-    body = (
-        "All steps done. Feel free to keep exploring FireMapSim."
-        if completed
-        else "You can keep exploring FireMapSim, or close this window."
-    )
+def append_agent_reply(page: Page, text: str) -> None:
+    page.evaluate("(t) => window.__fsai_append_agent__(t)", text)
 
-    page.evaluate(
-        """(data) => {
-            const { heading, body } = data;
-            try {
-                window.__guide_action__ = null;
-                const badge = document.getElementById('__fsai_step_badge__');
-                if (badge) badge.textContent = '';
-                const area = document.getElementById('__fsai_msg_area__');
-                if (area) {
-                    area.innerHTML = '';
-                    const h = document.createElement('div');
-                    h.setAttribute('style', 'all:initial !important; font-size:14px !important; font-weight:600 !important; color:#1a1a1a !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
-                    h.textContent = heading;
-                    area.appendChild(h);
-                    const b = document.createElement('div');
-                    b.setAttribute('style', 'all:initial !important; font-size:13px !important; color:#888 !important; margin-top:8px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
-                    b.textContent = body;
-                    area.appendChild(b);
-                }
-                const btnRow = document.getElementById('__fsai_btn_row__');
-                if (btnRow) {
-                    btnRow.innerHTML = '';
-                    const closeBtn = document.createElement('button');
-                    closeBtn.setAttribute('style', 'all:initial !important; background:#ff6600 !important; color:#fff !important; border:none !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:12px !important; font-weight:600 !important; padding:6px 14px !important; border-radius:6px !important; cursor:pointer !important;');
-                    closeBtn.textContent = 'Close browser';
-                    closeBtn.onclick = () => { window.__guide_action__ = 'close'; };
-                    btnRow.appendChild(closeBtn);
-                }
 
-                if (!window.__fsai_expanded__) {
-                    const badge = document.getElementById('__fsai_badge__');
-                    if (badge) badge.style.setProperty('display', 'block', 'important');
-                }
-            } catch (e) {
-                window.__guide_action__ = 'close';
-            }
-        }""",
-        {"heading": heading, "body": body},
-    )
+def append_agent_error(page: Page, text: str) -> None:
+    page.evaluate("(t) => window.__fsai_append_error__(t)", text)
 
 
 # ---------------------------------------------------------------------------
@@ -532,10 +565,8 @@ def chat(message: str) -> str:
     return resp.json()["reply"]
 
 
-def detect_step(reply: str, expected: str | None = None) -> str | None:
-    """Return highlight key — prefer the scripted per-step target over LLM keywords."""
-    if expected and expected in STEP_SELECTORS:
-        return expected
+def detect_step(reply: str) -> str | None:
+    """Return highlight key by scanning the reply for known UI control phrases."""
     lower = reply.lower()
     for phrase, key in KEYWORD_MAP:
         if phrase in lower:
@@ -579,67 +610,11 @@ def highlight_off(page: Page, selector: str) -> None:
         pass
 
 
-def wait_for_page_action(page: Page) -> str:
-    page.wait_for_function(
-        "() => window.__guide_action__ === 'next' || window.__guide_action__ === 'quit'",
-        timeout=0,
-    )
-    return page.evaluate("() => window.__guide_action__")
-
-
-def wait_for_close(page: Page) -> None:
-    page.wait_for_function(
-        "() => window.__guide_action__ === 'close'",
-        timeout=0,
-    )
-
-
 def narrate(reply: str) -> None:
     print("\n" + "-" * 60)
     print(textwrap.fill(clean_for_display(reply), width=78))
     print("-" * 60 + "\n")
 
-
-# ---------------------------------------------------------------------------
-# Demo script
-# ---------------------------------------------------------------------------
-
-# Each step maps a user message to the one UI control we highlight.
-# This avoids keyword mismatches when the agent mentions multiple fields.
-DEMO_STEPS: list[dict[str, str | None]] = [
-    {
-        "message": "I want to set up a prescribed burn simulation near Canton, GA.",
-        "highlight": None,
-    },
-    {
-        "message": "What cell resolution and cell space dimension should I use?",
-        "highlight": "cell_resolution",
-    },
-    {
-        "message": "How do I set the project location on the map?",
-        "highlight": "set_project_location",
-    },
-    {
-        "message": "Where do I enter wind speed and wind direction?",
-        "highlight": "wind_speed",
-    },
-    {
-        "message": "What simulation duration should I use for a prescribed burn?",
-        "highlight": "simulation_duration",
-    },
-    {
-        "message": "How do I get the terrain and fuel data for this area?",
-        "highlight": "get_terrain_fuel",
-    },
-    {
-        "message": "Walk me through setting an ignition line.",
-        "highlight": "set_line_ignition",
-    },
-    {
-        "message": "How do I start the simulation once everything is configured?",
-        "highlight": "start_simulation",
-    },
-]
 
 # ---------------------------------------------------------------------------
 # Main
@@ -670,7 +645,7 @@ def main() -> None:
         # Let the Vue app and Mapbox finish initializing.
         time.sleep(2)
 
-        # 1. Inject the collapsed launcher button + hidden sidebar panel.
+        # 1. Inject the collapsed launcher button + hidden chat sidebar.
         inject_sidebar(page)
 
         # 2. Pan the map to the Canton, GA project location immediately.
@@ -678,68 +653,55 @@ def main() -> None:
         pan_map_to_project(page, PROJECT_LAT, PROJECT_LNG, PROJECT_ZOOM)
         time.sleep(1)  # let the animation settle
 
-        print("Starting guided walkthrough.")
-        print("Click the orange button (bottom-right) to open the sidebar; use its")
-        print("'Next step' / 'Quit' buttons to control pacing.\n")
+        print("Ready. Click the orange button (bottom-right) to open the co-pilot")
+        print("and type a message. Close the browser window to end the session.\n")
 
-        total = len(DEMO_STEPS)
         active_selector: str | None = None
-        completed = False
 
-        for turn, step in enumerate(DEMO_STEPS, start=1):
-            user_msg = str(step["message"])
-            expected_highlight = step.get("highlight")
-            expected_key = expected_highlight if isinstance(expected_highlight, str) else None
-            print(f"\n[Turn {turn}/{total}]  User: {user_msg}")
+        while True:
+            try:
+                user_msg = wait_for_user_message(page)
+            except Exception:
+                break  # page/browser was closed
 
-            # Send to agent
+            print(f"\nUser: {user_msg}")
+
             try:
                 reply = chat(user_msg)
             except Exception as exc:
                 print(f"  x API error: {exc}")
-                reply = "Something went wrong reaching the assistant for this step. Please continue manually."
+                try:
+                    append_agent_error(page, "Sorry, I ran into a problem reaching the assistant. Please try again.")
+                except Exception:
+                    break
+                continue
 
+            display_text = clean_for_display(reply)
             narrate(reply)
 
-            # Highlight the control tied to this demo step (not LLM keyword guesswork).
-            step_key = detect_step(reply, expected=expected_key)
+            # Clear the previous highlight before applying the next one.
+            if active_selector:
+                highlight_off(page, active_selector)
+                active_selector = None
+
+            step_key = detect_step(reply)
             if step_key and step_key in STEP_SELECTORS:
                 selector = STEP_SELECTORS[step_key]
                 highlight_on(page, selector, str(step_key))
                 active_selector = selector
-                print(f"  (scripted highlight: {step_key})")
             else:
-                print("  (no highlight for this step)")
-                active_selector = None
+                print("  (no highlight for this reply)")
 
-            # Update the sidebar with the agent's plain-English reply
-            is_last = turn == total
             try:
-                update_sidebar(page, turn, total, reply, is_last)
-                action = wait_for_page_action(page)
-            except Exception as exc:
-                print(f"  !  Sidebar error, continuing automatically: {exc}")
-                action = "next"
-
-            # Remove highlight before moving to next step
-            if active_selector:
-                highlight_off(page, active_selector)
-
-            if action == "quit":
-                print("\nWalkthrough stopped early by user.")
+                append_agent_reply(page, display_text)
+            except Exception:
                 break
-        else:
-            completed = True
-            print("\nGuided walkthrough complete.")
 
-        # Final screen
+        print("\nSession ended (browser closed).")
         try:
-            show_sidebar_end(page, completed)
-            wait_for_close(page)
-        except Exception as exc:
-            print(f"  !  End screen error: {exc}")
-
-        browser.close()
+            browser.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
