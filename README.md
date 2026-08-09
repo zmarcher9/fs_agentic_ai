@@ -132,8 +132,7 @@ fs_agentic_ai/
 │   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (incl. map-nav rules)
 │   │   ├── tools.py         # geocode, config, UI help; registers resolve + navigate
 │   │   ├── tools_navigate_map.py
-│   │   ├── tools_resolve_location.py
-│   │   └── memory.py        # Legacy ConversationBufferWindowMemory (unused)
+│   │   └── tools_resolve_location.py
 │   ├── api/
 │   │   ├── routes_map.py     # POST /api/map/navigate
 │   │   └── cors_config.py    # CORS allowlist from settings
