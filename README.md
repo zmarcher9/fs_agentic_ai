@@ -1,5 +1,7 @@
 # firesim-ai
 
+[![Tests](https://github.com/zmarcher9/fs_agentic_ai/actions/workflows/tests.yml/badge.svg)](https://github.com/zmarcher9/fs_agentic_ai/actions/workflows/tests.yml)
+
 Agentic AI layer for the SIMS Lab FireMapSim wildfire simulation tool. Helps non-technical users (farmers, land managers) describe a burn scenario in plain language, get a valid simulation config, follow step-by-step UI guidance, and drive the map by typing a place or coordinates in chat.
 
 ## Tech stack
