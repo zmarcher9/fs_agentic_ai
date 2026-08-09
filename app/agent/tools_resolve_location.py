@@ -33,24 +33,38 @@ async def resolve_location_tool(
     """
     Classify and, if needed, geocode raw location text.
 
-    Returns JSON: {"ok", "status": "resolved"|"ambiguous"|"not_found",
+    Returns JSON: {"ok", "status": "resolved"|"ambiguous"|"not_found"|"error",
     "lat", "lon", "label", "query", "candidates": [...], "message"}.
 
     Call navigate_map only when status == "resolved". On "ambiguous",
     ask the user which candidate they meant. On "not_found", ask for a
-    fuller name or coordinates. Never invent lat/lon from a miss.
+    fuller name or coordinates. Never invent lat/lon from a miss. On
+    "error", tell the user the request couldn't be completed and ask
+    them to try again — do not call navigate_map.
 
     Raises on malformed/out-of-range coordinate text (e.g. "95, -84")
     — that's a usage error, not a lookup miss.
     """
     result = await resolve_location(text)
     thread_id = (config or {}).get("configurable", {}).get("thread_id")
-    if (
-        result.status == "resolved"
-        and result.lat is not None
-        and result.lon is not None
-        and thread_id
-    ):
+
+    if result.status == "resolved" and result.lat is not None and result.lon is not None:
+        if not thread_id:
+            # No session to bind the grant to — refuse rather than silently
+            # returning "resolved" with no way for navigate_map to ever
+            # consume a matching grant.
+            return json.dumps(
+                {
+                    "ok": False,
+                    "status": "error",
+                    "lat": None,
+                    "lon": None,
+                    "label": None,
+                    "query": result.query,
+                    "candidates": [],
+                    "message": "Could not authorize a map move: no active session.",
+                }
+            )
         navigation_grants.issue(
             thread_id,
             result.lat,

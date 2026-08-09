@@ -9,7 +9,7 @@ import pytest
 from langchain_core.runnables import RunnableConfig
 
 from app.agent.navigation_grants import navigation_grants
-from app.agent.tools import TOOLS
+from app.agent.registry import TOOLS
 from app.agent.tools_navigate_map import navigate_map
 from app.agent.tools_resolve_location import resolve_location_tool
 from app.config import Settings

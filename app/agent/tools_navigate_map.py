@@ -54,7 +54,8 @@ async def navigate_map(
     lat: float,
     lon: float,
     zoom: Optional[int] = None,
-    label: Optional[str] = None,
+    label: Optional[str] = None,  # unused: accepted for schema/prompt parity only,
+    # model-supplied labels are untrusted — grant.label is used instead below.
     config: RunnableConfig = None,
 ) -> str:
     """

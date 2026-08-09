@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from app.agent import agent as agent_module
 from app.agent.agent import run_agent
-from app.agent.tools import TOOLS
+from app.agent.registry import TOOLS
 
 
 def test_get_tools_returns_expected_tools() -> None:

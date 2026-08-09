@@ -12,7 +12,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
-from app.agent.tools import TOOLS
+from app.agent.registry import TOOLS
 from app.config import get_settings
 
 _turn_semaphore: asyncio.Semaphore | None = None

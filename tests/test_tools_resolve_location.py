@@ -1,10 +1,15 @@
 import json
 
 import pytest
+from langchain_core.runnables import RunnableConfig
 
 from app.agent import tools_resolve_location as tool_module
 from app.core.geocoder import GeocodeCandidate
 from app.core.resolve_location import ResolvedLocation
+
+
+def _config(thread_id="thread-abc"):
+    return RunnableConfig(configurable={"thread_id": thread_id})
 
 
 def _mock_resolve(monkeypatch, result: ResolvedLocation):
@@ -23,12 +28,33 @@ async def test_resolved_shape(monkeypatch):
             message="Resolved to Canton, GA",
         ),
     )
-    raw = await tool_module.resolve_location_tool.ainvoke({"text": "Canton, GA"})
+    raw = await tool_module.resolve_location_tool.ainvoke(
+        {"text": "Canton, GA"}, config=_config()
+    )
     body = json.loads(raw)
     assert body["ok"] is True
     assert body["status"] == "resolved"
     assert body["lat"] == 34.2368
     assert body["candidates"] == []
+
+
+@pytest.mark.asyncio
+async def test_resolved_without_thread_id_returns_error(monkeypatch):
+    """A resolved location with no session to bind the grant to must refuse
+    rather than silently reporting "resolved" with no way for navigate_map
+    to ever consume a matching grant — see tools_resolve_location.py."""
+    _mock_resolve(
+        monkeypatch,
+        ResolvedLocation(
+            status="resolved", lat=34.2368, lon=-84.4908, label="Canton, GA", query="Canton, GA",
+            message="Resolved to Canton, GA",
+        ),
+    )
+    raw = await tool_module.resolve_location_tool.ainvoke({"text": "Canton, GA"})
+    body = json.loads(raw)
+    assert body["ok"] is False
+    assert body["status"] == "error"
+    assert body["lat"] is None
 
 
 @pytest.mark.asyncio

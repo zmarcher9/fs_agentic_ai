@@ -3,7 +3,7 @@ Shared map-actuation JS, used by BrowserSessionPool (and eventually
 playwright/guide.py) so there's exactly one place that knows how to
 reach into the page and move the map.
 
-JS body is adapted from playwright/guide.py pan_map_to_project:
+JS body is adapted from playwright_guide/map_sync.py pan_map_to_project:
   - Vue FireMap walk via #app.__vue__ + $children
   - DOM Mapbox fallback on .mapboxgl-map
   - Updates FireMap.cur_lat / cur_long / coordinates / zoom
@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-# Shared with playwright/guide.py, which imports this directly rather than
-# keeping its own copy (FireMap Vue walk + .mapboxgl-map DOM fallback).
+# Shared with playwright_guide/map_sync.py, which imports this directly
+# rather than keeping its own copy (FireMap Vue walk + .mapboxgl-map DOM fallback).
 # Throws on failure so callers can map to MapNotReadyError. Supports
 # flyTo | jumpTo via `method`.
 PAN_MAP_JS = """

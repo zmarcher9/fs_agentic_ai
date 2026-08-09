@@ -130,7 +130,9 @@ fs_agentic_ai/
 │   ├── agent/
 │   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens, navigated_to)
 │   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (incl. map-nav rules)
-│   │   ├── tools.py         # geocode, config, UI help; registers resolve + navigate
+│   │   ├── registry.py      # TOOLS — aggregates all tools_*.py below
+│   │   ├── tools_config.py
+│   │   ├── tools_ui_help.py
 │   │   ├── tools_navigate_map.py
 │   │   └── tools_resolve_location.py
 │   ├── api/
@@ -150,7 +152,7 @@ fs_agentic_ai/
 │   │   ├── sanitize.py
 │   │   └── session_tokens.py
 │   ├── firesim/
-│   ├── tools/                # Legacy stubs
+│   ├── simulation/           # Legacy stubs
 │   └── config.py
 ├── playwright/
 │   └── guide.py
@@ -235,7 +237,7 @@ Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those
 ### Agent & tools
 
 - [ ] Bridge chat config → FireMapSim Apply button format
-- [ ] Implement or remove legacy `app/tools/` stubs
+- [ ] Implement or remove legacy `app/simulation/` stubs
 
 ### FireMapSim integration
 

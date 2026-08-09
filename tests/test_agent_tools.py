@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from app.agent.tools import build_project_config, explain_ui_step
+from app.agent.tools_config import build_project_config
+from app.agent.tools_ui_help import explain_ui_step
 
 
 def test_build_project_config_valid() -> None:
