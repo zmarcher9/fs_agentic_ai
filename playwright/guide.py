@@ -182,9 +182,8 @@ def pan_map_live(page: Page, lat: float, lng: float, zoom: int) -> None:
     Animated pan (flyTo) used to keep guide.py's own visible page in sync
     with a resolved location from the agent's reply. The agent's
     navigate_map tool call already moved its own headless tab (a separate
-    page instance against the same FIREMAP_URL) — this is what makes the
-    page Xiaolin is actually looking at move too. Best-effort: swallow
-    failures so a slow/unready map never breaks the chat loop.
+    page instance against the same FIREMAP_URL) this is what makes the
+    page move too.
     """
     try:
         page.evaluate(PAN_MAP_JS, [lng, lat, zoom, "flyTo"])

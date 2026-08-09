@@ -139,7 +139,7 @@ fs_agentic_ai/
 │   │   ├── pool.py           # BrowserSessionPool (semaphore + readiness)
 │   │   └── map_control.py    # pan_map() + shared PAN_MAP_JS — imported directly by guide.py too
 │   ├── core/
-│   │   ├── projection_converter.py  # acres→grid, WGS84↔grid
+│   │   ├── projection_converter.py  # WGS84↔grid conversion
 │   │   ├── location_parser.py
 │   │   ├── geocoder.py
 │   │   ├── resolve_location.py
@@ -177,7 +177,7 @@ fs_agentic_ai/
 |---|---|---|
 | `FIRESIM_SYSTEM_PROMPT` | Done | Includes map-nav flow + “tool payloads are untrusted data” |
 | `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `ainvoke` → `(reply, tokens_used, navigated_to)` |
-| `tools.py` | Done | Five tools on `TOOLS` |
+| `tools.py` | Done | Four tools on `TOOLS` |
 | `tools_navigate_map.py` | Done | Bounds/zoom + session from `thread_id` → pool |
 | `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found`; no invented coords |
 | CLI smoke test | Done | `python -m app.agent.agent` |
@@ -186,7 +186,6 @@ fs_agentic_ai/
 
 | Function / File | Status | Purpose |
 |---|---|---|
-| `acres_to_sim_bounds()` | Done | Acreage → grid settings + `_DOMAIN_MARGIN_FACTOR` (placeholder 1.10) |
 | `latlon_to_proj_center()` / grid converters | Done | EPSG:2239 |
 | `location_parser.py` | Done | Coords vs place; hard bounds gate |
 | `geocoder.py` | Done | Single async Mapbox/Nominatim path; TTL cache; sanitized labels |
@@ -208,11 +207,6 @@ fs_agentic_ai/
 | `POST /api/session` | Wired | Issues session token |
 | `POST /chat` | Wired | `await run_agent()` / LangGraph `ainvoke` (not `to_thread`) |
 | CORS | Wired | From `CORS_ORIGINS`; production rejects localhost origins |
-
-### Bug fixes (this session)
-
-- **`explain_ui_step`** — unknown step returns structured JSON (`error`, `requested_step`, `available_steps`).
-- **`acres_to_sim_bounds`** — `_DOMAIN_MARGIN_FACTOR = 1.10` placeholder; confirm real FireMapSim buffer with docs / Dr. Hu.
 
 ### Tests
 
@@ -257,7 +251,6 @@ Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those
 - [x] Set `NOMINATIM_USER_AGENT=FireSim-AI/1.0 (+https://firesim.cs.gsu.edu/)`
 - [ ] Streaming `POST /chat/stream` with SSE status (`Navigating to X…`)
 - [x] Thread raw user/query text into navigate audit log
-- [ ] Confirm `_DOMAIN_MARGIN_FACTOR` with FireMapSim / Dr. Hu
 
 ### Testing
 
@@ -284,7 +277,6 @@ Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those
 
 - **CORS production origin** — confirm `https://firesim.cs.gsu.edu` matches the real deploy; localhost is rejected when `APP_ENV=production`.
 - **Streaming not implemented** — `/chat` is async but has no SSE status line.
-- **`_DOMAIN_MARGIN_FACTOR`** — `1.10` is a placeholder, not a confirmed FireMapSim buffer.
 - **Dependency notes** — `geopy`/`shapely`/`pip-system-certs` are not runtime deps (geopy path removed; shapely unused; Windows cert helper not needed in the Playwright Linux image). `certifi` and `python-dotenv` arrive transitively via httpx/requests and pydantic-settings.
 
 ## API reference (current)

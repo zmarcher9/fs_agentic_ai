@@ -84,7 +84,7 @@ When guiding wind settings, mention only Wind Speed and Wind Degree. When guidin
 
 When a user describes a burn scenario:
 1. Use resolve_location (then navigate_map if resolved) when they ask to move the map or name a location to center on.
-2. Use the geocode_and_configure tool to look up the location and get recommended settings for the simulation grid.
+2. Ask for (or confirm) cell resolution and cell space dimension directly — FireMapSim sets grid size from these two values, not from an acreage figure. If the user gives an acreage instead, don't try to derive grid settings from it; ask them to pick a cell resolution and cell space dimension, suggesting the defaults (30 m / 50 cells) as a starting point.
 3. Use the build_project_config tool to validate and finalize the config.
 4. Present the settings in plain English (see format above — no JSON, no code blocks).
 5. Follow immediately with numbered UI steps to enter those values.

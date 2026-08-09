@@ -12,10 +12,9 @@ from app.agent.tools import TOOLS
 
 
 def test_get_tools_returns_expected_tools() -> None:
-    """Agent should expose geocode, config, UI, resolve, and navigate tools."""
-    assert len(TOOLS) == 5
+    """Agent should expose config, UI, resolve, and navigate tools."""
+    assert len(TOOLS) == 4
     assert {t.name for t in TOOLS} == {
-        "geocode_and_configure",
         "build_project_config",
         "explain_ui_step",
         "resolve_location",
