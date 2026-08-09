@@ -91,9 +91,20 @@ class ChatRequest(BaseModel):
     )
 
 
+class NavigatedTo(BaseModel):
+    lat: float
+    lon: float
+    zoom: Optional[int] = None
+    label: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
+    # Set when this turn moved the map (last successful navigate_map call).
+    # Lets a UI/co-pilot page re-pan itself in sync with the agent's own
+    # browser session instead of only the agent's headless tab moving.
+    navigated_to: Optional[NavigatedTo] = None
 
 
 class HealthResponse(BaseModel):
@@ -154,7 +165,7 @@ async def chat(req: ChatRequest, session_id: str = Depends(require_session_id)):
     logger.info("session=%s… | user: %s", session_id[:8], req.message[:120])
 
     try:
-        reply, tokens_used = await run_agent(
+        reply, tokens_used, navigated_to = await run_agent(
             user_message=req.message,
             thread_id=session_id,
         )
@@ -166,4 +177,4 @@ async def chat(req: ChatRequest, session_id: str = Depends(require_session_id)):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     logger.info("session=%s… | agent: %s", session_id[:8], reply[:120])
-    return ChatResponse(reply=reply, session_id=session_id)
+    return ChatResponse(reply=reply, session_id=session_id, navigated_to=navigated_to)

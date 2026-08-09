@@ -35,6 +35,7 @@ from playwright.sync_api import sync_playwright, Page, Locator
 
 # Add the project root to sys.path so we can import app.config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.browser.map_control import PAN_MAP_JS
 from app.config import get_settings
 
 # ---------------------------------------------------------------------------
@@ -143,74 +144,11 @@ def firesim_url(lat: float, lng: float, zoom: int) -> str:
     return f"{FIRESIM_BASE}?lat={lat}&lng={lng}&zoom={zoom}"
 
 
-PAN_MAP_JS = """
-([lat, lng, zoom]) => {
-    // #app.__vue__ is unreliable: when a descendant component's root render
-    // element happens to be the same DOM node as #app (a Vue 2 quirk), that
-    // descendant's instance overwrites __vue__ there, and its $children may
-    // be empty — the real app tree is orphaned from that starting point.
-    // Scan every element instead of trusting #app to hold the true root.
-    function findFireMapAnywhere() {
-        const all = document.querySelectorAll('*');
-        for (const el of all) {
-            const vm = el.__vue__;
-            if (vm && vm.$options && vm.$options.name === 'FireMap') return vm;
-        }
-        return null;
-    }
-
-    // The live Mapbox instance isn't necessarily on FireMap itself — it may
-    // live on a nested child component (e.g. a GlMap wrapper). Search the
-    // whole subtree for whichever component actually holds it.
-    function findMapInstance(vm, depth) {
-        if (!vm || depth > 12) return null;
-        if (vm.map && typeof vm.map.jumpTo === 'function') return vm.map;
-        const kids = vm.$children || [];
-        for (let i = 0; i < kids.length; i++) {
-            const found = findMapInstance(kids[i], depth + 1);
-            if (found) return found;
-        }
-        return null;
-    }
-
-    function findMapboxOnDom() {
-        const containers = document.querySelectorAll('.mapboxgl-map');
-        for (const el of containers) {
-            const keys = Object.getOwnPropertyNames(el);
-            for (let i = 0; i < keys.length; i++) {
-                const candidate = el[keys[i]];
-                if (candidate && typeof candidate.jumpTo === 'function') {
-                    return candidate;
-                }
-            }
-        }
-        return null;
-    }
-
-    const fireMap = findFireMapAnywhere();
-    let map = fireMap ? findMapInstance(fireMap, 0) : null;
-    if (!map) map = findMapboxOnDom();
-
-    if (!map) {
-        return { success: false, reason: 'Mapbox map instance not ready' };
-    }
-
-    try {
-        if (fireMap) {
-            fireMap.cur_lat = lat;
-            fireMap.cur_long = lng;
-            fireMap.coordinates = [lng, lat];
-            fireMap.zoom = zoom;
-        }
-        // Mapbox GL uses [longitude, latitude] order.
-        map.jumpTo({ center: [lng, lat], zoom: zoom, essential: true });
-        window.dispatchEvent(new Event('resize'));
-        return { success: true, method: fireMap ? 'vue_firemap_jumpTo' : 'dom_mapbox_jumpTo' };
-    } catch (e) {
-        return { success: false, reason: String(e) };
-    }
-}
-"""
+# PAN_MAP_JS (Vue FireMap walk + .mapboxgl-map DOM fallback) is imported
+# from app.browser.map_control — the same JS the agent's headless tab runs
+# via pan_map(), so guide.py's visible page and the agent's tab move the
+# map identically. It throws on failure rather than returning a status,
+# and its arg order is [lng, lat, zoom, method] (Mapbox convention).
 
 
 def pan_map_to_project(
@@ -224,21 +162,35 @@ def pan_map_to_project(
 ) -> None:
     """
     Pan and zoom the Mapbox map via FireMapSim's Vue FireMap component.
-    Retries until the map finishes loading.
+    Retries until the map finishes loading. Instant jump (cold-load
+    positioning) — see pan_map_live() for the animated chat-driven pan.
     """
     for attempt in range(1, max_attempts + 1):
-        result = page.evaluate(PAN_MAP_JS, [lat, lng, zoom])
-        if result.get("success"):
-            print(
-                f"  -> Map panned to ({lat}, {lng}) zoom={zoom}  "
-                f"[{result.get('method')}, attempt {attempt}]"
-            )
+        try:
+            page.evaluate(PAN_MAP_JS, [lng, lat, zoom, "jumpTo"])
+            print(f"  -> Map panned to ({lat}, {lng}) zoom={zoom}  [attempt {attempt}]")
             return
-        reason = result.get("reason", "unknown")
-        print(f"  ... map not ready ({attempt}/{max_attempts}): {reason}")
-        time.sleep(retry_delay)
+        except Exception as exc:
+            print(f"  ... map not ready ({attempt}/{max_attempts}): {exc}")
+            time.sleep(retry_delay)
 
     print("  !  Map pan failed after retries — user can pan manually.")
+
+
+def pan_map_live(page: Page, lat: float, lng: float, zoom: int) -> None:
+    """
+    Animated pan (flyTo) used to keep guide.py's own visible page in sync
+    with a resolved location from the agent's reply. The agent's
+    navigate_map tool call already moved its own headless tab (a separate
+    page instance against the same FIREMAP_URL) — this is what makes the
+    page Xiaolin is actually looking at move too. Best-effort: swallow
+    failures so a slow/unready map never breaks the chat loop.
+    """
+    try:
+        page.evaluate(PAN_MAP_JS, [lng, lat, zoom, "flyTo"])
+        print(f"  -> Sidebar page synced to agent's move: ({lat}, {lng}) zoom={zoom}")
+    except Exception as exc:
+        print(f"  !  Could not sync map pan: {exc}")
 
 # ---------------------------------------------------------------------------
 # Right sidebar panel injected into the FireMapSim page
@@ -552,8 +504,12 @@ def get_session_id() -> str:
     return _SESSION_ID
 
 
-def chat(message: str) -> str:
-    """Send a message to the firesim-ai agent and return the reply."""
+def chat(message: str) -> dict:
+    """
+    Send a message to the firesim-ai agent and return the parsed response
+    ({"reply", "session_id", "navigated_to"}). navigated_to is set when this
+    turn moved the map — the caller uses it to re-pan guide.py's own page.
+    """
     session_id = get_session_id()
     resp = requests.post(
         API_URL,
@@ -562,7 +518,7 @@ def chat(message: str) -> str:
         timeout=120,
     )
     resp.raise_for_status()
-    return resp.json()["reply"]
+    return resp.json()
 
 
 def detect_step(reply: str) -> str | None:
@@ -667,7 +623,7 @@ def main() -> None:
             print(f"\nUser: {user_msg}")
 
             try:
-                reply = chat(user_msg)
+                response = chat(user_msg)
             except Exception as exc:
                 print(f"  x API error: {exc}")
                 try:
@@ -676,8 +632,20 @@ def main() -> None:
                     break
                 continue
 
+            reply = response["reply"]
             display_text = clean_for_display(reply)
             narrate(reply)
+
+            # The agent's navigate_map call moved its own headless tab, not
+            # this page — re-pan here so what Xiaolin is looking at moves too.
+            navigated_to = response.get("navigated_to")
+            if navigated_to:
+                pan_map_live(
+                    page,
+                    navigated_to["lat"],
+                    navigated_to["lon"],
+                    navigated_to.get("zoom") or PROJECT_ZOOM,
+                )
 
             # Clear the previous highlight before applying the next one.
             if active_selector:

@@ -89,7 +89,7 @@ async def test_chat_round_trip_awaits_async_agent(client, monkeypatch):
 
     async def fake_run_agent(user_message: str, thread_id: str):
         calls.append((user_message, thread_id))
-        return "The map is ready.", 12
+        return "The map is ready.", 12, None
 
     monkeypatch.setattr(api_main, "run_agent", fake_run_agent)
     session_id = await _new_session(client)
@@ -104,6 +104,7 @@ async def test_chat_round_trip_awaits_async_agent(client, monkeypatch):
     assert response.json() == {
         "reply": "The map is ready.",
         "session_id": session_id,
+        "navigated_to": None,
     }
     assert calls == [("Move the map to Canton, Georgia", session_id)]
 

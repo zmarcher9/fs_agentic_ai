@@ -17,10 +17,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-# Reconciled with playwright/guide.py PAN_MAP_JS (FireMap Vue walk +
-# .mapboxgl-map DOM fallback). Throws on failure so callers can map to
-# MapNotReadyError. Supports flyTo | jumpTo via `method`.
-_PAN_MAP_JS = """
+# Shared with playwright/guide.py, which imports this directly rather than
+# keeping its own copy (FireMap Vue walk + .mapboxgl-map DOM fallback).
+# Throws on failure so callers can map to MapNotReadyError. Supports
+# flyTo | jumpTo via `method`.
+PAN_MAP_JS = """
 ([lng, lat, zoom, method]) => {
     // #app.__vue__ is unreliable: when a descendant component's root render
     // element happens to be the same DOM node as #app (a Vue 2 quirk), that
@@ -105,4 +106,4 @@ async def pan_map(
     method="flyTo"  -> chat-driven navigation (animated, visible motion)
     method="jumpTo" -> guide.py / initial load (instant, no animation)
     """
-    await page.evaluate(_PAN_MAP_JS, [lon, lat, zoom, method])
+    await page.evaluate(PAN_MAP_JS, [lon, lat, zoom, method])
