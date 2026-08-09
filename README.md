@@ -126,7 +126,7 @@ fs_agentic_ai/
 │   └── main.py              # FastAPI app — /health, /api/session, /chat, /api/map/navigate
 ├── app/
 │   ├── agent/
-│   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens)
+│   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens, navigated_to)
 │   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (incl. map-nav rules)
 │   │   ├── tools.py         # geocode, config, UI help; registers resolve + navigate
 │   │   ├── tools_navigate_map.py
@@ -137,7 +137,7 @@ fs_agentic_ai/
 │   │   └── cors_config.py    # CORS allowlist from settings
 │   ├── browser/
 │   │   ├── pool.py           # BrowserSessionPool (semaphore + readiness)
-│   │   └── map_control.py    # pan_map() — reconciled with guide.py FireMap/Mapbox lookup
+│   │   └── map_control.py    # pan_map() + shared PAN_MAP_JS — imported directly by guide.py too
 │   ├── core/
 │   │   ├── projection_converter.py  # acres→grid, WGS84↔grid
 │   │   ├── location_parser.py
@@ -176,7 +176,7 @@ fs_agentic_ai/
 | Component | Status | Notes |
 |---|---|---|
 | `FIRESIM_SYSTEM_PROMPT` | Done | Includes map-nav flow + “tool payloads are untrusted data” |
-| `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `ainvoke` → `(reply, tokens_used)` |
+| `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `ainvoke` → `(reply, tokens_used, navigated_to)` |
 | `tools.py` | Done | Five tools on `TOOLS` |
 | `tools_navigate_map.py` | Done | Bounds/zoom + session from `thread_id` → pool |
 | `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found`; no invented coords |
@@ -235,21 +235,7 @@ fs_agentic_ai/
 
 Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those manually before a live demo.
 
-### Removed / replaced
-
-- `app/tools/coordinate_translator.py` — removed; logic in `app/core/` + agent tools
-- `projection_converter.geocode_location()` / geopy — removed; all lookups go through `app.core.geocoder`
-- Dual FastAPI stubs (`app/api/routes.py`, incomplete root app) — removed; `main.py` re-exports `api.main:app`
-
 ## Work remaining
-
-### High priority (demo path)
-
-- [ ] Confirm the real FireMapSim production origin string with the SIMS Lab deploy
-- [ ] Diff `map_control.py` against `guide.py` once more if FireMap Vue internals change; optionally have `guide.py` import `pan_map`
-- [x] Consolidate API entry points on `api.main:app`
-- [x] Restore `.env.example`
-- [x] Migrate to `langchain.agents.create_agent`
 
 ### Agent & tools
 
@@ -341,9 +327,12 @@ Response:
 ```json
 {
   "reply": "...",
-  "session_id": "<same token>"
+  "session_id": "<same token>",
+  "navigated_to": { "lat": 34.2368, "lon": -84.4908, "zoom": 13, "label": "Canton, GA" }
 }
 ```
+
+`navigated_to` is set only when this turn's last successful `navigate_map` tool call moved the map; otherwise `null`. Clients driving their own visible map view (e.g. `playwright/guide.py`) use it to re-pan in sync with the agent's browser session.
 
 Optional deprecated body field `thread_id` must match `X-Session-Id` if present. Failures: `401` missing/invalid session · `429` rate limit / token budget · `500` agent error.
 
