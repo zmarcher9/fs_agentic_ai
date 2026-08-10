@@ -154,6 +154,26 @@ async def _fetch_nominatim(
     ]
 
 
+
+# V6's Smart Address Match confidence (address-type features only —
+# features[].properties.match_code.confidence), calibrated so that
+# differing tiers clear AMBIGUITY_IMPORTANCE_GAP (resolve_location.py)
+# while same-tier candidates tie and correctly still read as ambiguous.
+_MATCH_CODE_IMPORTANCE = {
+    "exact": 1.0,
+    "high": 0.8,
+    "medium": 0.55,
+    "low": 0.3,
+}
+
+
+def _core_place_name(label: str) -> str:
+    """Leading comma-delimited segment, case-folded — used to spot a
+    genuine name collision (e.g. two different "Athens" results) when a
+    candidate has neither `relevance` nor `match_code` to go on."""
+    return label.split(",", 1)[0].strip().casefold()
+
+
 async def _fetch_mapbox(
     query: str,
     limit: int,
@@ -173,7 +193,9 @@ async def _fetch_mapbox(
     )
     response.raise_for_status()
     candidates: list[GeocodeCandidate] = []
-    for index, feature in enumerate(response.json().get("features", [])):
+    top_core_name: str | None = None
+    top_importance = 0.0
+    for feature in response.json().get("features", []):
         properties = feature.get("properties") or {}
         coordinates = (feature.get("geometry") or {}).get("coordinates") or []
         if len(coordinates) < 2:
@@ -184,14 +206,40 @@ async def _fetch_mapbox(
         if not label and name and place_formatted:
             label = f"{name}, {place_formatted}"
         label = label or name or feature.get("place_name") or query
-        # V5 responses expose relevance. V6 may omit a numeric score, so retain
-        # provider order with a small descending score for ambiguity handling.
-        importance = float(feature.get("relevance", max(0.0, 1.0 - index * 0.01)))
+        label = sanitize_label(label) or query
+
+        relevance = feature.get("relevance")
+        confidence = (properties.get("match_code") or {}).get("confidence")
+        if relevance is not None:
+            # V5 (and some V6 responses) expose a real match score.
+            importance = float(relevance)
+        elif confidence in _MATCH_CODE_IMPORTANCE:
+            importance = _MATCH_CODE_IMPORTANCE[confidence]
+        elif top_core_name is None:
+            # First kept candidate, no numeric signal at all available —
+            # trust Mapbox's own best-match-first ordering.
+            importance = 1.0
+        elif _core_place_name(label) == top_core_name:
+            # Shares its leading name with the top hit (e.g. a second,
+            # different "Athens") — a genuine competing interpretation,
+            # not just a lesser match. Keep it close to the top score so
+            # the ambiguity gap still catches it and asks the user.
+            importance = max(0.0, top_importance - 0.02)
+        else:
+            # Clearly a different place from the top hit. Mapbox's own
+            # ordering already ranked it lower and nothing here suggests
+            # it's a real competitor, so don't make the agent hedge.
+            importance = 0.4
+
+        if top_core_name is None:
+            top_core_name = _core_place_name(label)
+            top_importance = importance
+
         candidates.append(
             GeocodeCandidate(
                 lat=float(coordinates[1]),
                 lon=float(coordinates[0]),
-                display_name=sanitize_label(label) or query,
+                display_name=label,
                 importance=importance,
             )
         )

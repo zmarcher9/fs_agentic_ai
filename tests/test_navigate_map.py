@@ -101,6 +101,28 @@ async def test_zoom_none_passed_through_for_pool_to_default(fake_pool_navigate):
 
 
 @pytest.mark.asyncio
+async def test_missing_grant_returns_structured_failure_instead_of_raising(monkeypatch):
+    """
+    navigate_map called without a preceding resolve_location (or with a
+    stale/mismatched grant) is a recoverable "can't proceed" condition,
+    not a reason to blow up the whole chat turn — same reasoning as the
+    pool-error case below.
+    """
+
+    def raising_consume(session_id, lat, lon):
+        raise ValueError("navigate_map requires a successful resolve_location call in this session")
+
+    monkeypatch.setattr(tools_navigate_map.navigation_grants, "consume", raising_consume)
+
+    raw = await navigate_map.ainvoke(
+        {"lat": 34.2368, "lon": -84.4908, "zoom": 13}, config=_config()
+    )
+    result = json.loads(raw)
+    assert result["ok"] is False
+    assert "resolve_location" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_pool_error_returns_structured_failure_instead_of_raising(monkeypatch):
     """
     Pool errors (map not ready, session dead, pool exhausted, rate limited)

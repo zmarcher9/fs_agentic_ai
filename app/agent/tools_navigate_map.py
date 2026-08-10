@@ -68,7 +68,17 @@ async def navigate_map(
     un-geocoded place name in lat/lon.
     """
     session_id = _session_id_from_config(config)
-    grant = navigation_grants.consume(session_id, lat, lon)
+
+    try:
+        grant = navigation_grants.consume(session_id, lat, lon)
+    except ValueError as exc:
+        # No grant, or one that doesn't match these coordinates (e.g.
+        # navigate_map called without a preceding resolve_location, or a
+        # stale grant already consumed by an earlier call). Same "return a
+        # structured failure instead of raising" reasoning as below — kept
+        # in its own except so a real ValueError from pool.navigate() isn't
+        # silently swallowed by this same branch.
+        return json.dumps({"ok": False, "error": str(exc), "lat": lat, "lon": lon, "label": None})
 
     try:
         result = await pool.navigate(

@@ -15,6 +15,12 @@ Note on coverage:
   EPSG:2239 is valid for Georgia east of ~84.5°W. For locations further west,
   swap _FIRESIM_CRS to EPSG:2240 (Georgia State Plane West). All other logic
   stays the same.
+
+Verified against production, not assumed: reverse-transforming a real
+downloaded FireMapSim sample project's proj_center_lng/lat under EPSG:2239
+lands ~5mi from Canton, GA (the project's actual location) — EPSG:5070
+(NAD83 Conus Albers, sometimes used for nationwide LANDFIRE-sourced fuel
+data) does not match, landing ~70mi off in Oklahoma instead.
 """
 
 from pyproj import Transformer

@@ -14,9 +14,31 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.agent.prompts import FIRESIM_SYSTEM_PROMPT
 from app.agent.registry import TOOLS
 from app.config import get_settings
+from app.core.session_tokens import is_valid_session
 
 _turn_semaphore: asyncio.Semaphore | None = None
 _session_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+# _session_locks gains one entry per distinct thread_id and never shrinks on
+# its own — every request reaching run_agent already passed require_session_id's
+# is_valid_session check, so a thread_id whose token has since expired/been
+# revoked will never be looked up again and its lock is safe to drop (as long
+# as nothing is actively holding it). Gated on a size threshold so ordinary
+# turns don't pay an O(n) scan just to keep the dict tidy.
+_STALE_LOCK_SWEEP_THRESHOLD = 500
+
+
+def _prune_stale_locks() -> None:
+    """Evict _session_locks entries for sessions that are no longer valid."""
+    if len(_session_locks) < _STALE_LOCK_SWEEP_THRESHOLD:
+        return
+    stale = [
+        thread_id
+        for thread_id, lock in _session_locks.items()
+        if not lock.locked() and not is_valid_session(thread_id)
+    ]
+    for thread_id in stale:
+        _session_locks.pop(thread_id, None)
 
 
 @lru_cache
@@ -75,6 +97,8 @@ async def run_agent(
     global _turn_semaphore
     if _turn_semaphore is None:
         _turn_semaphore = asyncio.Semaphore(get_settings().llm_max_concurrent_turns)
+
+    _prune_stale_locks()
 
     # Preserve LangGraph message order within a session while bounding total
     # provider concurrency across independent sessions.

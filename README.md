@@ -154,8 +154,7 @@ fs_agentic_ai/
 │   │   └── session_tokens.py
 │   ├── firesim/
 │   │   ├── client.py         # FireMapSimClient — stub: subprocess/HTTP execution
-│   │   ├── schemas.py        # SimulationConfig / SimulationOutput
-│   │   └── projection_converter.py
+│   │   └── schemas.py        # SimulationConfig / SimulationOutput
 │   ├── simulation/           # Legacy stubs — parameter_builder, run_simulation, parse_results
 │   └── config.py
 ├── playwright/
@@ -252,7 +251,7 @@ Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those
 
 - [ ] `app/firesim/client.py` — run simulations
 - [ ] Full project file generation (ignition / fuel breaks)
-- [ ] Align EPSG:5070 vs EPSG:2239 with production
+- [x] Align EPSG:5070 vs EPSG:2239 with production — confirmed EPSG:2239 correct by reverse-transforming a real downloaded sample project's `proj_center_lng/lat` (lands ~5mi from Canton, GA; EPSG:5070 does not match)
 - [ ] Parse and explain simulation results
 
 ### Config & infrastructure

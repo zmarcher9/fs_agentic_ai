@@ -79,6 +79,43 @@ async def test_run_agent_uses_async_graph_invocation(monkeypatch) -> None:
     assert calls[0][1]["configurable"]["thread_id"] == "session-1"
 
 
+def test_prune_stale_locks_noop_below_threshold(monkeypatch) -> None:
+    """No scan at all until _session_locks actually grows large enough to
+    be worth the cost — expired entries just sit there below threshold."""
+    agent_module.reset_agent()
+    monkeypatch.setattr(agent_module, "_STALE_LOCK_SWEEP_THRESHOLD", 100)
+    monkeypatch.setattr(agent_module, "is_valid_session", lambda tid: False)
+
+    agent_module._session_locks["expired-idle"]
+    agent_module._prune_stale_locks()
+
+    assert "expired-idle" in agent_module._session_locks
+    agent_module.reset_agent()
+
+
+@pytest.mark.asyncio
+async def test_prune_stale_locks_evicts_invalid_unlocked_sessions(monkeypatch) -> None:
+    """Once past the threshold: drop locks for sessions whose token is no
+    longer valid, but never touch one that's currently held (in-flight)."""
+    agent_module.reset_agent()
+    monkeypatch.setattr(agent_module, "_STALE_LOCK_SWEEP_THRESHOLD", 1)
+    monkeypatch.setattr(agent_module, "is_valid_session", lambda tid: tid == "still-active")
+
+    agent_module._session_locks["still-active"]  # valid session -> kept
+    agent_module._session_locks["expired-idle"]  # invalid + unlocked -> pruned
+    held_lock = agent_module._session_locks["expired-but-in-flight"]
+    await held_lock.acquire()  # invalid but currently in use -> kept regardless
+    try:
+        agent_module._prune_stale_locks()
+        assert set(agent_module._session_locks.keys()) == {
+            "still-active",
+            "expired-but-in-flight",
+        }
+    finally:
+        held_lock.release()
+        agent_module.reset_agent()
+
+
 @pytest.mark.asyncio
 async def test_run_agent_surfaces_last_successful_navigation(monkeypatch) -> None:
     """navigated_to should reflect the last ok navigate_map ToolMessage this turn."""
