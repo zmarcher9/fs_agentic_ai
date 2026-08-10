@@ -131,6 +131,7 @@ fs_agentic_ai/
 │   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens, navigated_to)
 │   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (incl. map-nav rules)
 │   │   ├── registry.py      # TOOLS — aggregates all tools_*.py below
+│   │   ├── navigation_grants.py  # One-use grants binding resolve_location → navigate_map
 │   │   ├── tools_config.py
 │   │   ├── tools_ui_help.py
 │   │   ├── tools_navigate_map.py
@@ -140,7 +141,7 @@ fs_agentic_ai/
 │   │   └── cors_config.py    # CORS allowlist from settings
 │   ├── browser/
 │   │   ├── pool.py           # BrowserSessionPool (semaphore + readiness)
-│   │   └── map_control.py    # pan_map() + shared PAN_MAP_JS — imported directly by guide.py too
+│   │   └── map_control.py    # pan_map() + shared PAN_MAP_JS — imported directly by playwright_guide too
 │   ├── core/
 │   │   ├── projection_converter.py  # WGS84↔grid conversion
 │   │   ├── location_parser.py
@@ -152,10 +153,18 @@ fs_agentic_ai/
 │   │   ├── sanitize.py
 │   │   └── session_tokens.py
 │   ├── firesim/
-│   ├── simulation/           # Legacy stubs
+│   │   ├── client.py         # FireMapSimClient — stub: subprocess/HTTP execution
+│   │   ├── schemas.py        # SimulationConfig / SimulationOutput
+│   │   └── projection_converter.py
+│   ├── simulation/           # Legacy stubs — parameter_builder, run_simulation, parse_results
 │   └── config.py
 ├── playwright/
-│   └── guide.py
+│   └── guide.py              # Entry point: config + main() orchestration only
+├── playwright_guide/         # Support modules for guide.py
+│   ├── api_client.py         # get_session_id(), chat()
+│   ├── highlighting.py       # STEP_SELECTORS, KEYWORD_MAP, detect_step(), highlight_on/off()
+│   ├── map_sync.py           # firesim_url(), pan_map_to_project(), pan_map_live()
+│   └── sidebar.py            # inject_sidebar() + chat sidebar JS
 ├── demo/
 │   └── run_demo.py
 ├── tests/
@@ -180,9 +189,9 @@ fs_agentic_ai/
 |---|---|---|
 | `FIRESIM_SYSTEM_PROMPT` | Done | Includes map-nav flow + “tool payloads are untrusted data” |
 | `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `ainvoke` → `(reply, tokens_used, navigated_to)` |
-| `tools.py` | Done | Four tools on `TOOLS` |
+| `registry.py` | Done | Four tools on `TOOLS`, aggregated from `tools_*.py` |
 | `tools_navigate_map.py` | Done | Bounds/zoom + session from `thread_id` → pool |
-| `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found`; no invented coords |
+| `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found` / `error`; no invented coords |
 | CLI smoke test | Done | `python -m app.agent.agent` |
 
 ### Core utilities (`app/core/`)
@@ -228,7 +237,7 @@ fs_agentic_ai/
 | `tests/test_config.py` / `test_audit_log.py` | Done |
 | `tests/test_rate_limiter.py` / `test_sanitize.py` / `test_session_tokens.py` / `test_map_bounds.py` | Done |
 | `tests/test_agent.py` | Done (tool registry + async `ainvoke`) |
-| `tests/test_tools.py` | Skipped — legacy simulation stubs not implemented |
+| `tests/test_simulation.py` | Skipped — legacy simulation stubs not implemented |
 
 Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those manually before a live demo.
 
