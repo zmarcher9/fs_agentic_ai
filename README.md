@@ -137,8 +137,7 @@ fs_agentic_ai/
 │   │   ├── tools_navigate_map.py
 │   │   └── tools_resolve_location.py
 │   ├── api/
-│   │   ├── routes_map.py     # POST /api/map/navigate
-│   │   └── cors_config.py    # CORS allowlist from settings
+│   │   └── routes_map.py     # POST /api/map/navigate
 │   ├── browser/
 │   │   ├── pool.py           # BrowserSessionPool (semaphore + readiness)
 │   │   └── map_control.py    # pan_map() + shared PAN_MAP_JS — imported directly by playwright_guide too

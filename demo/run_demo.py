@@ -27,7 +27,6 @@ Thread / session ID:
 
 """
 
-import json
 import os
 import time
 import textwrap
@@ -84,19 +83,12 @@ def print_user(msg: str) -> None:
 
 def print_agent(reply: str) -> None:
     print(f"\n🤖  AGENT:\n")
-    # Preserve any JSON blocks; wrap everything else.
-    in_json = False
+    # The agent narrates everything in plain English (system prompt forbids
+    # raw JSON in replies — see FIRESIM_SYSTEM_PROMPT), so replies are just
+    # wrapped text, no code-block preservation needed.
     for line in reply.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("{") or stripped.startswith("["):
-            in_json = True
-        if in_json:
-            print(f"    {line}")
-            if stripped.endswith("}") or stripped.endswith("]"):
-                in_json = False
-        else:
-            for wrapped in textwrap.wrap(line, width=TERM_WIDTH - 4) or [""]:
-                print(f"    {wrapped}")
+        for wrapped in textwrap.wrap(line, width=TERM_WIDTH - 4) or [""]:
+            print(f"    {wrapped}")
 
 
 def get_session_id() -> str:
@@ -145,19 +137,6 @@ def run_turn(user_msg: str, pause_after: float = 1.5) -> str:
     return reply
 
 
-def extract_json_block(text: str) -> dict | None:
-    """
-    Pull the first JSON object out of a string (agent reply may embed config).
-    Returns parsed dict or None.
-    """
-    try:
-        start = text.index("{")
-        end   = text.rindex("}") + 1
-        return json.loads(text[start:end])
-    except (ValueError, json.JSONDecodeError):
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Demo script
 # ---------------------------------------------------------------------------
@@ -176,10 +155,10 @@ TURNS: list[tuple[str, str]] = [
         "projection will you use for the simulation grid?"
     ),
     (
-        "3. Request the full configuration JSON",
-        "Can you give me the complete simulation configuration JSON "
-        "for this Canton burn, including cell resolution, grid size, "
-        "wind parameters, and projection center?"
+        "3. Ask for the full configuration summary",
+        "Can you summarize the complete simulation configuration for this "
+        "Canton burn, including cell resolution, grid size, wind parameters, "
+        "and the location coordinates?"
     ),
     (
         "4. Ask about wind conditions",
@@ -252,27 +231,14 @@ def main() -> None:
     input("  Press ENTER to begin the demo …")
     print()
 
-    config_json = None
-
     for label, msg in TURNS:
         section(label)
-        reply = run_turn(msg, pause_after=2.0)
-
-        # If this turn produced a JSON config, stash it for display later.
-        if config_json is None:
-            config_json = extract_json_block(reply)
+        run_turn(msg, pause_after=2.0)
 
     # ---------------------------------------------------------------------------
     # Final summary
     # ---------------------------------------------------------------------------
     header("Demo Complete")
-
-    if config_json:
-        section("Extracted simulation config")
-        print(json.dumps(config_json, indent=2))
-    else:
-        print("  (No JSON config block detected in replies.)")
-
     divider("═")
     print()
     print("  Next steps:")
