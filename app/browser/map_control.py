@@ -4,10 +4,14 @@ playwright/guide.py) so there's exactly one place that knows how to
 reach into the page and move the map.
 
 JS body is adapted from playwright_guide/map_sync.py pan_map_to_project:
-  - Vue FireMap walk via #app.__vue__ + $children
+  - window.__MAPBOX__ global, if the frontend exposes it
+  - Vue FireMap walk via #app.__vue__ + $children, as a fallback
   - DOM Mapbox fallback on .mapboxgl-map
-  - Updates FireMap.cur_lat / cur_long / coordinates / zoom
   - Calls map[method]({ center: [lng, lat], zoom, essential: true })
+
+The frontend keeps its own cur_lat/cur_long/coordinates/zoom state in sync
+via the map's own getCenter()/getZoom(), so this JS doesn't write those
+fields itself.
 
 Arg order to evaluate is [lng, lat, zoom, method] (Mapbox convention).
 method="flyTo" for chat nav; method="jumpTo" for guide / cold load.
@@ -18,16 +22,24 @@ from __future__ import annotations
 from typing import Any, Literal
 
 # Shared with playwright_guide/map_sync.py, which imports this directly
-# rather than keeping its own copy (FireMap Vue walk + .mapboxgl-map DOM fallback).
-# Throws on failure so callers can map to MapNotReadyError. Supports
-# flyTo | jumpTo via `method`.
+# rather than keeping its own copy (window.__MAPBOX__ + FireMap Vue walk +
+# .mapboxgl-map DOM fallback). Throws on failure so callers can map to
+# MapNotReadyError. Supports flyTo | jumpTo via `method`.
 PAN_MAP_JS = """
 ([lng, lat, zoom, method]) => {
-    // #app.__vue__ is unreliable: when a descendant component's root render
-    // element happens to be the same DOM node as #app (a Vue 2 quirk), that
-    // descendant's instance overwrites __vue__ there, and its $children may
-    // be empty — the real app tree is orphaned from that starting point.
-    // Scan every element instead of trusting #app to hold the true root.
+    // Preferred: the frontend exposes the live Mapbox instance directly.
+    function findMapboxGlobal() {
+        return (window.__MAPBOX__ && typeof window.__MAPBOX__.jumpTo === 'function')
+            ? window.__MAPBOX__
+            : null;
+    }
+
+    // Fallback: #app.__vue__ is unreliable: when a descendant component's
+    // root render element happens to be the same DOM node as #app (a Vue 2
+    // quirk), that descendant's instance overwrites __vue__ there, and its
+    // $children may be empty — the real app tree is orphaned from that
+    // starting point. Scan every element instead of trusting #app to hold
+    // the true root.
     function findFireMapAnywhere() {
         const all = document.querySelectorAll('*');
         for (const el of all) {
@@ -65,8 +77,11 @@ PAN_MAP_JS = """
         return null;
     }
 
-    const fireMap = findFireMapAnywhere();
-    let map = fireMap ? findMapInstance(fireMap, 0) : null;
+    let map = findMapboxGlobal();
+    if (!map) {
+        const fireMap = findFireMapAnywhere();
+        map = fireMap ? findMapInstance(fireMap, 0) : null;
+    }
     if (!map) map = findMapboxOnDom();
 
     if (!map) {
@@ -76,12 +91,6 @@ PAN_MAP_JS = """
         throw new Error('Map method not available: ' + method);
     }
 
-    if (fireMap) {
-        fireMap.cur_lat = lat;
-        fireMap.cur_long = lng;
-        fireMap.coordinates = [lng, lat];
-        fireMap.zoom = zoom;
-    }
     // Mapbox GL uses [longitude, latitude] order.
     map[method]({ center: [lng, lat], zoom: zoom, essential: true });
     window.dispatchEvent(new Event('resize'));
