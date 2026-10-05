@@ -1,13 +1,12 @@
-"""LangGraph ReAct agent wiring for the FireMapSim setup co-pilot."""
+"""LangGraph ReAct agent wiring for the FireMapSim Q&A helper."""
 
 import asyncio
-import json
 from collections import defaultdict
 from functools import lru_cache
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -57,7 +56,7 @@ def get_agent() -> Any:
         tools=TOOLS,
         checkpointer=MemorySaver(),
         system_prompt=FIRESIM_SYSTEM_PROMPT,
-        name="firesim_setup_copilot",
+        name="firesim_qa_helper",
     )
 
 
@@ -80,19 +79,13 @@ def _content_to_text(content: str | list) -> str:
     return ""
 
 
-async def run_agent(
-    user_message: str, thread_id: str = "default"
-) -> tuple[str, int, dict[str, Any] | None]:
+async def run_agent(user_message: str, thread_id: str = "default") -> tuple[str, int]:
     """
-    Run the FireMapSim co-pilot agent.
+    Run the FireMapSim Q&A helper agent.
 
-    Returns (reply_text, tokens_used, navigated_to). Token count is summed
-    from message usage_metadata when the provider reports it; otherwise a
-    rough char-based estimate so llm_token_budget still has something to
-    enforce. navigated_to is {lat, lon, zoom, label} from the last
-    successful navigate_map tool call this turn, or None if the agent
-    didn't move the map — callers (e.g. playwright/guide.py) use it to
-    re-pan their own page in sync with the agent's headless one.
+    Returns (reply_text, tokens_used). Token count is summed from message
+    usage_metadata when the provider reports it; otherwise a rough
+    char-based estimate so llm_token_budget still has something to enforce.
     """
     global _turn_semaphore
     if _turn_semaphore is None:
@@ -109,31 +102,10 @@ async def run_agent(
                 config={"configurable": {"thread_id": thread_id}},
             )
     tokens_used = _estimate_tokens(result["messages"], user_message)
-    navigated_to = _last_navigation(result["messages"])
     for message in reversed(result["messages"]):
         if isinstance(message, AIMessage):
-            return _content_to_text(message.content), tokens_used, navigated_to
+            return _content_to_text(message.content), tokens_used
     raise ValueError("Agent did not return an AIMessage")
-
-
-def _last_navigation(messages: list) -> dict[str, Any] | None:
-    """Most recent successful navigate_map tool result this turn, if any."""
-    navigated_to: dict[str, Any] | None = None
-    for message in messages:
-        if not isinstance(message, ToolMessage) or message.name != "navigate_map":
-            continue
-        try:
-            payload = json.loads(_content_to_text(message.content))
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if payload.get("ok"):
-            navigated_to = {
-                "lat": payload["lat"],
-                "lon": payload["lon"],
-                "zoom": payload.get("zoom"),
-                "label": payload.get("label"),
-            }
-    return navigated_to
 
 
 def _estimate_tokens(messages: list, user_message: str) -> int:
@@ -156,9 +128,8 @@ def _estimate_tokens(messages: list, user_message: str) -> int:
 
 if __name__ == "__main__":
     async def _main() -> None:
-        text, _tokens, _navigated_to = await run_agent(
-            "I want to do a prescribed burn near Canton, GA, about 200 acres, "
-            "wind from the southwest at 15 km/h"
+        text, _tokens = await run_agent(
+            "How do I set the wind direction, and what does Cell Resolution change?"
         )
         print(text)
 

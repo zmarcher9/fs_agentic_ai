@@ -2,18 +2,18 @@
 
 [![Tests](https://github.com/zmarcher9/fs_agentic_ai/actions/workflows/tests.yml/badge.svg)](https://github.com/zmarcher9/fs_agentic_ai/actions/workflows/tests.yml)
 
-Agentic AI layer for the SIMS Lab FireMapSim wildfire simulation tool. Helps non-technical users (farmers, land managers) describe a burn scenario in plain language, get a valid simulation config, follow step-by-step UI guidance, and drive the map by typing a place or coordinates in chat.
+Q&A helper for the SIMS Lab FireMapSim wildfire simulation website. Non-technical users (farmers, land managers) ask questions in plain language — "how do I set wind speed?", "what does Cell Resolution change?" — and the helper answers while highlighting the relevant control on the live page.
+
+The helper **never operates the site**: it doesn't move the map, fill in fields, click buttons, or start runs. The user stays in the driver's seat; the agent narrates and points.
 
 ## Tech stack
 
 - Python 3.11+
 - LangChain / LangGraph — ReAct agent with tool calling and conversation memory
 - OpenRouter — anthropic/claude-sonnet-4 via OpenAI-compatible API
-- FastAPI / Uvicorn — HTTP API for chat clients, Playwright, and demos
-- Pydantic — FireMapSim project schemas and API models
-- pyproj — coordinate conversion
-- httpx — shared async Mapbox/Nominatim geocoding client
-- Playwright — drives FireMapSim in a real browser context (session pool + guide sidebar)
+- FastAPI / Uvicorn — HTTP API for chat clients, the guide sidebar, and demos
+- Pydantic — settings and API models
+- Playwright — local guide script only (`playwright/guide.py`): opens FireMapSim, injects the chat sidebar, highlights controls. The API server itself has no browser dependency.
 
 ## Quick start
 
@@ -22,7 +22,7 @@ Agentic AI layer for the SIMS Lab FireMapSim wildfire simulation tool. Helps non
 ```powershell
 cd fs_agentic_ai
 python -m pip install -r requirements.txt
-python -m playwright install chromium
+python -m playwright install chromium   # only needed for playwright/guide.py
 ```
 
 If Node cannot verify the browser download certificate on managed Windows,
@@ -30,16 +30,12 @@ set `NODE_OPTIONS=--use-system-ca` for the install command.
 
 ### 2. Configure environment
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (start from `.env.example`):
 
 ```
 OPENROUTER_API_KEY=sk-or-v1-...
-GEOCODER_PROVIDER=nominatim
 FIREMAP_URL=http://localhost:5173
 ```
-
-Start from `.env.example`. Production requires `GEOCODER_PROVIDER=mapbox`
-and `MAPBOX_ACCESS_TOKEN`; public Nominatim is development-only.
 
 ### 3. Run the agent (CLI smoke test)
 
@@ -47,14 +43,14 @@ and `MAPBOX_ACCESS_TOKEN`; public Nominatim is development-only.
 python -m app.agent.agent
 ```
 
-### 4. Run the HTTP API (recommended for demos / Playwright)
+### 4. Run the HTTP API
 
 ```powershell
 python -m uvicorn api.main:app --reload --port 8000
 ```
 
-Use exactly one worker. Authentication, LangGraph memory, rate limits,
-geocoder cache, and Playwright browser sessions are process-local.
+Use exactly one worker. Authentication, LangGraph memory, and rate limits
+are process-local.
 
 Health check:
 
@@ -62,11 +58,19 @@ Health check:
 Invoke-RestMethod http://localhost:8000/health
 ```
 
-The endpoint reports readiness and returns 503 if Chromium is disconnected.
+### 5. Run the live guide (optional)
+
+With the API running and FireMapSim available at `FIREMAP_URL`:
+
+```powershell
+python playwright/guide.py
+```
+
+This opens FireMapSim in a visible browser, adds an orange launcher button
+(bottom-right) for the chat sidebar, and highlights whichever control the
+agent's reply mentions. It runs on your machine, not in the container.
 
 ### Container
-
-The image pins Playwright and its browser image to `1.60.0`:
 
 ```powershell
 docker compose up --build
@@ -77,42 +81,24 @@ runtime and excluded from the Docker build context. If `pip install` fails
 during `docker build` with an SSL certificate error (common on corporate
 networks), the Dockerfile already trusts PyPI hosts for the install step.
 
-### Browser capacity benchmark
-
-Run this while the real FireMap page is available at `FIREMAP_URL`:
+### Chat from a terminal
 
 ```powershell
-python -m scripts.benchmark_playwright --contexts 1 2 4 --output playwright-benchmark.json
+.\scripts\chat.ps1
 ```
 
-Use the measured process-tree RSS and CPU results to set
-`PLAYWRIGHT_MAX_CONTEXTS` and container resource limits. The deployed-page
-benchmark in `benchmarks/playwright-contexts.json` measured approximately
-721 MB / 1.07 GB / 1.75 GB loaded RSS for 1 / 2 / 4 contexts. The selected
-default is 2 contexts with a 2 GiB, 2 CPU Compose limit.
-
-Issue a session, then chat (same `X-Session-Id` is the LangGraph thread id and map pool key):
+Or by hand:
 
 ```powershell
 $session = Invoke-RestMethod -Uri http://localhost:8000/api/session -Method POST
 $headers = @{ "X-Session-Id" = $session.session_id }
 
-$body = @{
-  message = "I want to run a prescribed burn near Canton, GA, about 200 acres"
-} | ConvertTo-Json
+$body = @{ message = "How do I draw an ignition line?" } | ConvertTo-Json
 
 Invoke-RestMethod -Uri http://localhost:8000/chat -Method POST -ContentType "application/json" -Headers $headers -Body $body
 ```
 
-Map navigate:
-
-```powershell
-$body = @{ lat = 34.2368; lon = -84.4908; zoom = 13; label = "Canton, GA" } | ConvertTo-Json
-
-Invoke-RestMethod -Uri http://localhost:8000/api/map/navigate -Method POST -ContentType "application/json" -Headers $headers -Body $body
-```
-
-Demo / guide share a session via `FIRESIM_SESSION_ID` (must be issued by this API process):
+Demo / guide can share a session via `FIRESIM_SESSION_ID` (must be issued by this API process):
 
 ```powershell
 $env:FIRESIM_SESSION_ID = $session.session_id
@@ -125,52 +111,30 @@ python playwright/guide.py
 ```
 fs_agentic_ai/
 ├── api/
-│   └── main.py              # FastAPI app — /health, /api/session, /chat, /api/map/navigate
+│   └── main.py              # FastAPI app — /health, /api/session, /chat
 ├── app/
 │   ├── agent/
-│   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens, navigated_to)
-│   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (incl. map-nav rules)
-│   │   ├── registry.py      # TOOLS — aggregates all tools_*.py below
-│   │   ├── navigation_grants.py  # One-use grants binding resolve_location → navigate_map
-│   │   ├── tools_config.py
-│   │   ├── tools_ui_help.py
-│   │   ├── tools_navigate_map.py
-│   │   └── tools_resolve_location.py
-│   ├── api/
-│   │   └── routes_map.py     # POST /api/map/navigate
-│   ├── browser/
-│   │   ├── pool.py           # BrowserSessionPool (semaphore + readiness)
-│   │   └── map_control.py    # pan_map() + shared PAN_MAP_JS — imported directly by playwright_guide too
+│   │   ├── agent.py         # LangGraph agent + run_agent() → (reply, tokens)
+│   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT (Q&A helper; never operates the site)
+│   │   ├── registry.py      # TOOLS — aggregates tools_*.py
+│   │   └── tools_ui_help.py # explain_ui_step — plain-English per-control instructions
 │   ├── core/
-│   │   ├── projection_converter.py  # WGS84↔grid conversion
-│   │   ├── location_parser.py
-│   │   ├── geocoder.py
-│   │   ├── resolve_location.py
-│   │   ├── map_bounds.py
-│   │   ├── rate_limiter.py
-│   │   ├── audit_log.py
-│   │   ├── sanitize.py
+│   │   ├── rate_limiter.py  # chat turn limiter + LLM token budget
+│   │   ├── sanitize.py      # strip injection-style text from external tool content
 │   │   └── session_tokens.py
-│   ├── firesim/
-│   │   ├── client.py         # FireMapSimClient — stub: subprocess/HTTP execution
-│   │   └── schemas.py        # SimulationConfig / SimulationOutput
-│   ├── simulation/           # Legacy stubs — parameter_builder, run_simulation, parse_results
 │   └── config.py
 ├── playwright/
-│   └── guide.py              # Entry point: config + main() orchestration only
+│   └── guide.py              # Local live guide: sidebar + highlighting
 ├── playwright_guide/         # Support modules for guide.py
 │   ├── api_client.py         # get_session_id(), chat()
 │   ├── highlighting.py       # STEP_SELECTORS, KEYWORD_MAP, detect_step(), highlight_on/off()
-│   ├── map_sync.py           # firesim_url(), pan_map_to_project(), pan_map_live()
 │   └── sidebar.py            # inject_sidebar() + chat sidebar JS
 ├── demo/
-│   └── run_demo.py
-├── tests/
-├── benchmarks/
-│   └── playwright-contexts.json
+│   └── run_demo.py           # Scripted Q&A walkthrough against /chat
 ├── scripts/
-│   └── benchmark_playwright.py
-├── main.py                    # Re-exports api.main:app; uvicorn --workers 1
+│   └── chat.ps1              # Interactive terminal chat
+├── tests/
+├── main.py                   # Re-exports api.main:app; uvicorn --workers 1
 ├── Dockerfile
 ├── compose.yaml
 ├── .env.example
@@ -179,129 +143,72 @@ fs_agentic_ai/
 └── requirements.txt
 ```
 
+## How highlighting works
+
+`playwright/guide.py` sends each message to `/chat`, then scans the reply
+text with `detect_step()` for a known control name ("Wind Speed",
+"Set Line Ignition", …) and outlines that control on the page. It works off
+the reply text alone, so it highlights for both UI how-to answers and
+background answers that mention a control. `tools_ui_help._UI_STEPS` and
+`highlighting.STEP_SELECTORS` use the same key names for the same controls;
+`tests/test_agent_tools.py` guards against them drifting apart.
+
 ## Work completed
 
-### Agent (`app/agent/`)
-
 | Component | Status | Notes |
 |---|---|---|
-| `FIRESIM_SYSTEM_PROMPT` | Done | Includes map-nav flow + “tool payloads are untrusted data” |
-| `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `ainvoke` → `(reply, tokens_used, navigated_to)` |
-| `registry.py` | Done | Four tools on `TOOLS`, aggregated from `tools_*.py` |
-| `tools_navigate_map.py` | Done | Bounds/zoom + session from `thread_id` → pool |
-| `tools_resolve_location.py` | Done | `resolved` / `ambiguous` / `not_found` / `error`; no invented coords |
-| CLI smoke test | Done | `python -m app.agent.agent` |
-
-### Core utilities (`app/core/`)
-
-| Function / File | Status | Purpose |
-|---|---|---|
-| `latlon_to_proj_center()` / grid converters | Done | EPSG:2239 |
-| `location_parser.py` | Done | Coords vs place; hard bounds gate |
-| `geocoder.py` | Done | Single async Mapbox/Nominatim path; TTL cache; sanitized labels |
-| `resolve_location.py` | Done | Classify + geocode outcomes |
-| `map_bounds.py` | Done | Shared zoom reject (never clamp) |
-| `rate_limiter.py` | Done | Navigate + chat + LLM token budget |
-| `audit_log.py` | Done | Structured navigate audit with raw `requested_text` + `resolved_label` |
-| `sanitize.py` | Done | Strip injection-style text from geocoder labels |
-| `session_tokens.py` | Done | Issued, unguessable `X-Session-Id` tokens |
-| `config.py` | Done | Pydantic settings for LLM, geocoder, Playwright, CORS, FireMap URL |
-
-### Map navigation + API wiring
-
-| Component | Status | Notes |
-|---|---|---|
-| `BrowserSessionPool` | Wired | Env-configured semaphore; readiness on `/health` |
-| `map_control.pan_map` | Done | FireMap Vue walk + Mapbox DOM fallback; `flyTo` / `jumpTo` |
-| `POST /api/map/navigate` | Wired | Mounted on `api.main`; auth + rate limit + audit |
-| `POST /api/session` | Wired | Issues session token |
-| `POST /chat` | Wired | `await run_agent()` / LangGraph `ainvoke` (not `to_thread`) |
-| CORS | Wired | From `CORS_ORIGINS`; production rejects localhost origins |
+| `FIRESIM_SYSTEM_PROMPT` | Done | Q&A scope; "cannot move the map / fill fields / click"; tool payloads are untrusted data (stated as a partial mitigation) |
+| `agent.py` | Done | LangGraph ReAct agent; async `run_agent` → `(reply, tokens_used)`; per-session lock + global concurrency cap |
+| `explain_ui_step` | Done | JSON on hit and miss; keys aligned with highlight selectors; no actuation-era phrasing |
+| `POST /api/session`, `POST /chat` | Done | Issued unguessable session tokens; chat rate limit + LLM token budget |
+| `GET /health` | Done | Liveness only — no browser to wait on |
+| CORS | Done | From `CORS_ORIGINS`; production rejects localhost origins |
+| Live guide | Done | Sidebar + text-based highlighting; never pans or edits the page |
 
 ### Tests
 
-| File | Status |
+| File | Covers |
 |---|---|
-| `tests/test_coordinate_translator.py` | Done |
-| `tests/test_location_parser.py` | Done |
-| `tests/test_geocoder.py` | Done (mocked httpx) |
-| `tests/test_resolve_location.py` | Done |
-| `tests/test_tools_resolve_location.py` | Done |
-| `tests/test_navigate_map.py` | Done |
-| `tests/test_browser_pool.py` | Done (fake Playwright + rate-limiter reset fixture) |
-| `tests/test_routes_map.py` | Done |
-| `tests/test_api_main.py` | Done (`/health`, `/api/session`, `/chat`, resolve→navigate) |
-| `tests/test_adversarial_agent.py` | Done (grant gate + malicious geocoder labels) |
-| `tests/test_config.py` / `test_audit_log.py` | Done |
-| `tests/test_rate_limiter.py` / `test_sanitize.py` / `test_session_tokens.py` / `test_map_bounds.py` | Done |
-| `tests/test_agent.py` | Done (tool registry + async `ainvoke`) |
-| `tests/test_simulation.py` | Skipped — legacy simulation stubs not implemented |
-
-Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those manually before a live demo.
+| `tests/test_adversarial_agent.py` | Only narration tools registered; no tool takes a path/URL argument; hostile step names; prompt forbids operating the site; server never imports a browser driver |
+| `tests/test_agent_tools.py` | `explain_ui_step` shape; `_UI_STEPS` ↔ `STEP_SELECTORS` key alignment |
+| `tests/test_api_main.py` | `/health`, `/api/session`, `/chat` round trips (mocked LLM) |
+| `tests/test_agent.py` | Tool registry, agent factory wiring, async `ainvoke`, stale-lock pruning |
+| `tests/test_config.py` / `test_rate_limiter.py` / `test_sanitize.py` / `test_session_tokens.py` | Settings validation and core utilities |
 
 ## Work remaining
 
-### Agent & tools
-
-- [ ] Bridge chat config → FireMapSim Apply button format
-- [ ] Implement or remove legacy `app/simulation/` stubs
-
-### FireMapSim integration
-
-- [ ] `app/firesim/client.py` — run simulations
-- [ ] Full project file generation (ignition / fuel breaks)
-- [x] Align EPSG:5070 vs EPSG:2239 with production — confirmed EPSG:2239 correct by reverse-transforming a real downloaded sample project's `proj_center_lng/lat` (lands ~5mi from Canton, GA; EPSG:5070 does not match)
-- [ ] Parse and explain simulation results
-
-### Config & infrastructure
-
-- [x] Finish `app/config.py` (Pydantic settings + runtime validation)
-- [x] Async `/chat` via `await run_agent()` / LangGraph `ainvoke`
-- [x] One async geocoder path (geopy removed; Mapbox/Nominatim provider selection)
-- [x] Set `NOMINATIM_USER_AGENT=FireSim-AI/1.0 (+https://firesim.cs.gsu.edu/)`
-- [ ] Streaming `POST /chat/stream` with SSE status (`Navigating to X…`)
-- [x] Thread raw user/query text into navigate audit log
-
-### Testing
-
-- [x] Adversarial suite: navigate-only actuator, grant gate, malicious geocoder labels
-- [x] API integration tests for `/health`, `/api/session`, `/chat` (mocked LLM)
-- [ ] Optional live Nominatim/Mapbox + Chromium smoke test
+- [ ] Domain/background knowledge grounded in Dr. Hu's reference material. Once the files are in hand: if they're short-form/FAQ-shaped, fold them into a dict like `_UI_STEPS`; only build a file-backed `answer_domain_question` tool (reading `docs/knowledge/`) if the material is genuinely long-form. A file-backed tool must take a free-text query resolved against its own fixed file list (never an LLM-supplied path), cap per-file size, accept plain text/markdown only, and come with doc-content-injection cases in `tests/test_adversarial_agent.py`.
+- [ ] Confirm with Dr. Hu whether recommending specific simulation parameter values is in scope (currently: no — the helper explains settings, ranges, and trade-offs only).
+- [ ] Add `_UI_STEPS` entries for `go_project_location` and `selected_area` once their visible labels/behavior are confirmed on the live site.
+- [ ] Streaming `POST /chat/stream`.
+- [ ] Slim the container image now that the server runs no Chromium (see Known issues).
 
 ## Environment variables
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | Yes (agent) | OpenRouter API key |
-| `GEOCODER_PROVIDER` | Yes | `mapbox` in production; `nominatim` for development |
-| `MAPBOX_ACCESS_TOKEN` | Production | Mapbox geocoding credential |
-| `NOMINATIM_USER_AGENT` | Dev Nominatim | Contactable User-Agent (policy requirement) |
-| `FIREMAP_URL` | Yes | FireMap page loaded by Playwright |
-| `PLAYWRIGHT_MAX_CONTEXTS` | No | Active context cap; default 2 |
+| `OPENROUTER_BASE_URL` | No | Default `https://openrouter.ai/api/v1` |
+| `LLM_MODEL` | No | Default `anthropic/claude-sonnet-4` |
+| `LLM_MAX_CONCURRENT_TURNS` | No | Global cap on concurrent agent turns; default 4 |
+| `FIREMAP_URL` | Guide only | FireMapSim page opened by `playwright/guide.py` |
+| `API_BASE_URL` | Guide/demo | Where `guide.py` / `run_demo.py` reach the API; default `http://localhost:8000` |
 | `CORS_ORIGINS` | No | Comma-separated allowlist; no localhost in production |
-| `FIRESIM_PATH` | Later | Path/URL to FireMapSim |
 | `FIRESIM_SESSION_ID` | Demo | Shared issued session between `demo/` and `guide.py` |
 | `APP_ENV` | No | Default `development` |
 
 ## Known issues
 
+- **Container image is oversized** — the base image is still `mcr.microsoft.com/playwright/python` and `compose.yaml` sets `shm_size: 1gb`, both left over from server-side Chromium. The API no longer needs either; `guide.py` is a local script and doesn't run in the container.
 - **CORS production origin** — confirm `https://firesim.cs.gsu.edu` matches the real deploy; localhost is rejected when `APP_ENV=production`.
-- **Streaming not implemented** — `/chat` is async but has no SSE status line.
-- **Dependency notes** — `geopy`/`shapely`/`pip-system-certs` are not runtime deps (geopy path removed; shapely unused; Windows cert helper not needed in the Playwright Linux image). `certifi` and `python-dotenv` arrive transitively via httpx/requests and pydantic-settings.
+- **Highlighting is text-matched** — `detect_step()` picks one control per reply (the highest-priority match in `KEYWORD_MAP`), so a reply that mentions several controls highlights only one.
 
-## API reference (current)
+## API reference
 
 ### `GET /health`
 
 ```json
-{
-  "status": "ready",
-  "version": "0.1.0",
-  "browser_connected": true,
-  "active_contexts": 0,
-  "max_contexts": 2,
-  "waiting_requests": 0
-}
+{ "status": "ready", "version": "0.1.0" }
 ```
 
 ### `POST /api/session`
@@ -309,7 +216,7 @@ Map-nav / security tests do not hit live Nominatim or Chromium. Smoke-test those
 Response:
 
 ```json
-{ "session_id": "<ungessable token>" }
+{ "session_id": "<unguessable token>" }
 ```
 
 ### `POST /chat`
@@ -319,49 +226,16 @@ Header: `X-Session-Id: <issued token>`
 Request:
 
 ```json
-{
-  "message": "I want a prescribed burn near Canton, GA, 200 acres, wind from the southwest at 15 km/h"
-}
+{ "message": "How do I set the wind direction?" }
 ```
 
 Response:
 
 ```json
-{
-  "reply": "...",
-  "session_id": "<same token>",
-  "navigated_to": { "lat": 34.2368, "lon": -84.4908, "zoom": 13, "label": "Canton, GA" }
-}
+{ "reply": "...", "session_id": "<same token>" }
 ```
-
-`navigated_to` is set only when this turn's last successful `navigate_map` tool call moved the map; otherwise `null`. Clients driving their own visible map view (e.g. `playwright/guide.py`) use it to re-pan in sync with the agent's browser session.
 
 Optional deprecated body field `thread_id` must match `X-Session-Id` if present. Failures: `401` missing/invalid session · `429` rate limit / token budget · `500` agent error.
-
-### `POST /api/map/navigate`
-
-Header: `X-Session-Id: <issued token>`
-
-Request:
-
-```json
-{ "lat": 34.2368, "lon": -84.4908, "zoom": 13, "label": "Canton, GA" }
-```
-
-Response:
-
-```json
-{
-  "ok": true,
-  "lat": 34.2368,
-  "lon": -84.4908,
-  "zoom": 13,
-  "label": "Canton, GA",
-  "message": "Moved map to Canton, GA"
-}
-```
-
-Failure codes: `401` · `404` · `422` · `429` · `503`.
 
 ## License / attribution
 

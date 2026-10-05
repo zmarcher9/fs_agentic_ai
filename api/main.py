@@ -1,39 +1,27 @@
 """
 api/main.py
 
-FastAPI wrapper for the firesim-ai agent.
+FastAPI wrapper for the firesim-ai Q&A helper agent.
 
 Routes:
   POST /api/session       — issue unguessable X-Session-Id
   POST /chat              — auth via X-Session-Id; { message } → { reply }
-  POST /api/map/navigate  — auth via X-Session-Id; pan map for that session
   GET  /health            — sanity check
 
 Run locally:
   uvicorn api.main:app --reload --port 8000
 """
 
-import asyncio
 import logging
-import sys
 from contextlib import asynccontextmanager
 from typing import Optional
-
-if sys.platform == "win32":
-    # Playwright spawns its Node driver via subprocess_exec, which
-    # SelectorEventLoop (sometimes picked by uvicorn --reload on Windows)
-    # does not support. Force Proactor before anything creates a loop.
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.agent.agent import run_agent
-from app.api.routes_map import router as map_router
-from app.browser.pool import pool
 from app.config import get_settings
-from app.core.geocoder import start_geocoder, stop_geocoder
 from app.core.rate_limiter import RateLimitExceededError, chat_rate_limiter, llm_token_budget
 from app.core.session_tokens import issue_session_token, is_valid_session
 
@@ -49,20 +37,13 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.validate_runtime()
     logger.info("firesim-ai API starting up")
-    await start_geocoder(settings)
-    try:
-        await pool.start()
-        logger.info("BrowserSessionPool started")
-        yield
-    finally:
-        await pool.stop()
-        await stop_geocoder()
-        logger.info("firesim-ai API shutting down")
+    yield
+    logger.info("firesim-ai API shutting down")
 
 
 app = FastAPI(
     title="firesim-ai",
-    description="Agentic setup co-pilot for FireMapSim wildfire simulations",
+    description="Q&A helper for the FireMapSim wildfire simulation website",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -74,8 +55,6 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "X-Session-Id"],
 )
-
-app.include_router(map_router)
 
 
 class SessionResponse(BaseModel):
@@ -91,29 +70,14 @@ class ChatRequest(BaseModel):
     )
 
 
-class NavigatedTo(BaseModel):
-    lat: float
-    lon: float
-    zoom: Optional[int] = None
-    label: Optional[str] = None
-
-
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
-    # Set when this turn moved the map (last successful navigate_map call).
-    # Lets a UI/co-pilot page re-pan itself in sync with the agent's own
-    # browser session instead of only the agent's headless tab moving.
-    navigated_to: Optional[NavigatedTo] = None
 
 
 class HealthResponse(BaseModel):
     status: str
     version: str
-    browser_connected: bool
-    active_contexts: int
-    max_contexts: int
-    waiting_requests: int
 
 
 def require_session_id(x_session_id: Optional[str] = Header(default=None)) -> str:
@@ -124,19 +88,15 @@ def require_session_id(x_session_id: Optional[str] = Header(default=None)) -> st
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
 async def health():
-    """Readiness check for the API and its shared Chromium process."""
-    readiness = pool.readiness()
-    if not readiness["browser_connected"]:
-        raise HTTPException(status_code=503, detail="Browser pool is not ready")
-    return HealthResponse(status="ready", version=app.version, **readiness)
+    """Liveness check for the API process."""
+    return HealthResponse(status="ready", version=app.version)
 
 
 @app.post("/api/session", response_model=SessionResponse, tags=["auth"])
 async def create_session():
     """
     Issue an unguessable session token. Clients must send it as
-    X-Session-Id on /chat and /api/map/navigate. The same value is the
-    LangGraph thread_id / browser pool key.
+    X-Session-Id on /chat. The same value is the LangGraph thread_id.
     """
     token = issue_session_token()
     logger.info("issued session_id=%s…", token[:8])
@@ -146,10 +106,10 @@ async def create_session():
 @app.post("/chat", response_model=ChatResponse, tags=["agent"])
 async def chat(req: ChatRequest, session_id: str = Depends(require_session_id)):
     """
-    Send a message to the firesim-ai agent and get a reply.
+    Send a message to the firesim-ai Q&A helper and get a reply.
 
     Requires a valid X-Session-Id from POST /api/session. That id is the
-    conversation thread and the map browser-session key.
+    conversation thread.
     """
     if req.thread_id is not None and req.thread_id != session_id:
         raise HTTPException(
@@ -165,7 +125,7 @@ async def chat(req: ChatRequest, session_id: str = Depends(require_session_id)):
     logger.info("session=%s… | user: %s", session_id[:8], req.message[:120])
 
     try:
-        reply, tokens_used, navigated_to = await run_agent(
+        reply, tokens_used = await run_agent(
             user_message=req.message,
             thread_id=session_id,
         )
@@ -177,4 +137,4 @@ async def chat(req: ChatRequest, session_id: str = Depends(require_session_id)):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     logger.info("session=%s… | agent: %s", session_id[:8], reply[:120])
-    return ChatResponse(reply=reply, session_id=session_id, navigated_to=navigated_to)
+    return ChatResponse(reply=reply, session_id=session_id)

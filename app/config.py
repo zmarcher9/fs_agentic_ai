@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Single source of truth for API, agent, geocoder, and browser settings."""
+    """Single source of truth for API, agent, and guide settings."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -41,44 +41,7 @@ class Settings(BaseSettings):
         default=4, ge=1, alias="LLM_MAX_CONCURRENT_TURNS"
     )
 
-    geocoder_provider: Literal["nominatim", "mapbox"] = Field(
-        default="nominatim", alias="GEOCODER_PROVIDER"
-    )
-    mapbox_access_token: str | None = Field(default=None, alias="MAPBOX_ACCESS_TOKEN")
-    mapbox_permanent: bool = Field(default=True, alias="MAPBOX_PERMANENT")
-    nominatim_url: str = Field(
-        default="https://nominatim.openstreetmap.org/search",
-        alias="NOMINATIM_URL",
-    )
-    nominatim_user_agent: str = Field(
-        default="FireSim-AI/1.0 (+https://firesim.cs.gsu.edu/)",
-        alias="NOMINATIM_USER_AGENT",
-    )
-    geocoder_timeout_seconds: float = Field(
-        default=10.0, gt=0, alias="GEOCODER_TIMEOUT_SECONDS"
-    )
-    geocoder_cache_ttl_seconds: float = Field(
-        default=3600.0, ge=0, alias="GEOCODER_CACHE_TTL_SECONDS"
-    )
-    geocoder_cache_max_entries: int = Field(
-        default=500, ge=0, alias="GEOCODER_CACHE_MAX_ENTRIES"
-    )
-
     firemap_url: str = Field(default="http://localhost:5173", alias="FIREMAP_URL")
-    playwright_max_contexts: int = Field(
-        default=2, ge=1, alias="PLAYWRIGHT_MAX_CONTEXTS"
-    )
-    playwright_max_waiters: int = Field(
-        default=8, ge=0, alias="PLAYWRIGHT_MAX_WAITERS"
-    )
-    playwright_acquire_timeout_seconds: float = Field(
-        default=2.0, gt=0, alias="PLAYWRIGHT_ACQUIRE_TIMEOUT_SECONDS"
-    )
-    playwright_idle_ttl_seconds: float = Field(
-        default=600.0, gt=0, alias="PLAYWRIGHT_IDLE_TTL_SECONDS"
-    )
-
-    firesim_path: str | None = Field(default=None, alias="FIRESIM_PATH")
 
     @field_validator("cors_origins")
     @classmethod
@@ -95,20 +58,6 @@ class Settings(BaseSettings):
         """Validate settings required to serve real requests."""
         if not self.openrouter_api_key:
             raise ValueError("OPENROUTER_API_KEY is required")
-        if self.geocoder_provider == "mapbox" and not self.mapbox_access_token:
-            raise ValueError(
-                "MAPBOX_ACCESS_TOKEN is required when GEOCODER_PROVIDER=mapbox"
-            )
-        if self.app_env == "production" and self.geocoder_provider != "mapbox":
-            raise ValueError("Production deployments must use GEOCODER_PROVIDER=mapbox")
-        if self.geocoder_provider == "nominatim":
-            normalized_user_agent = self.nominatim_user_agent.casefold()
-            placeholders = ("configure", "example.com", "your-team", "changeme")
-            if any(value in normalized_user_agent for value in placeholders):
-                raise ValueError(
-                    "NOMINATIM_USER_AGENT must identify FireSim-AI with a real "
-                    "contact URL or email"
-                )
         if self.app_env == "production":
             localhost_origins = [
                 origin

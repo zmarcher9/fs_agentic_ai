@@ -1,10 +1,9 @@
 """Tests for LangChain agent setup and executor wiring."""
 
-import json
 from types import SimpleNamespace
 
 import pytest
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage
 
 from app.agent import agent as agent_module
 from app.agent.agent import run_agent
@@ -12,14 +11,8 @@ from app.agent.registry import TOOLS
 
 
 def test_get_tools_returns_expected_tools() -> None:
-    """Agent should expose config, UI, resolve, and navigate tools."""
-    assert len(TOOLS) == 4
-    assert {t.name for t in TOOLS} == {
-        "build_project_config",
-        "explain_ui_step",
-        "resolve_location",
-        "navigate_map",
-    }
+    """The Q&A helper exposes only narration tools."""
+    assert [t.name for t in TOOLS] == ["explain_ui_step"]
 
 
 def test_run_agent_is_callable() -> None:
@@ -51,7 +44,7 @@ def test_get_agent_uses_current_langchain_factory(monkeypatch) -> None:
     assert captured["model"] is fake_model
     assert captured["tools"] is TOOLS
     assert captured["system_prompt"] == agent_module.FIRESIM_SYSTEM_PROMPT
-    assert captured["name"] == "firesim_setup_copilot"
+    assert captured["name"] == "firesim_qa_helper"
 
     agent_module.get_agent.cache_clear()
 
@@ -71,11 +64,10 @@ async def test_run_agent_uses_async_graph_invocation(monkeypatch) -> None:
     agent_module.reset_agent()
     monkeypatch.setattr(agent_module, "get_agent", lambda: FakeAgent())
 
-    reply, tokens, navigated_to = await run_agent("hello", thread_id="session-1")
+    reply, tokens = await run_agent("hello", thread_id="session-1")
 
     assert reply == "Async response"
     assert tokens > 0
-    assert navigated_to is None
     assert calls[0][1]["configurable"]["thread_id"] == "session-1"
 
 
@@ -114,57 +106,3 @@ async def test_prune_stale_locks_evicts_invalid_unlocked_sessions(monkeypatch) -
     finally:
         held_lock.release()
         agent_module.reset_agent()
-
-
-@pytest.mark.asyncio
-async def test_run_agent_surfaces_last_successful_navigation(monkeypatch) -> None:
-    """navigated_to should reflect the last ok navigate_map ToolMessage this turn."""
-
-    class FakeAgent:
-        async def ainvoke(self, payload, config):
-            return {
-                "messages": payload["messages"]
-                + [
-                    ToolMessage(
-                        content=json.dumps(
-                            {
-                                "ok": False,
-                                "error": "map not ready",
-                                "lat": 34.0,
-                                "lon": -84.0,
-                                "label": "Canton, GA",
-                            }
-                        ),
-                        name="navigate_map",
-                        tool_call_id="call_1",
-                    ),
-                    ToolMessage(
-                        content=json.dumps(
-                            {
-                                "ok": True,
-                                "lat": 34.2367621,
-                                "lon": -84.4907621,
-                                "zoom": 13,
-                                "label": "Canton, GA",
-                                "message": "Moved map to Canton, GA",
-                            }
-                        ),
-                        name="navigate_map",
-                        tool_call_id="call_2",
-                    ),
-                    AIMessage(content="I moved the map to Canton, GA."),
-                ]
-            }
-
-    agent_module.reset_agent()
-    monkeypatch.setattr(agent_module, "get_agent", lambda: FakeAgent())
-
-    reply, _tokens, navigated_to = await run_agent("Move to Canton, GA", thread_id="session-2")
-
-    assert reply == "I moved the map to Canton, GA."
-    assert navigated_to == {
-        "lat": 34.2367621,
-        "lon": -84.4907621,
-        "zoom": 13,
-        "label": "Canton, GA",
-    }

@@ -3,8 +3,7 @@ Generic per-key sliding-window rate limiter.
 
 Two things live here:
   - SlidingWindowRateLimiter: caps N events per key per time window.
-    Used by navigate_rate_limiter (wired into pool.navigate() — see
-    app/browser/pool.py) and available for a /chat turn limiter.
+    Used by chat_rate_limiter (enforced per /chat turn in api/main.py).
   - SessionTokenBudget: caps LLM token usage per session per window.
 
 In-memory, per-process — fine at demo scale. Move to Redis/similar if
@@ -59,11 +58,6 @@ class SlidingWindowRateLimiter:
 
 
 # ---- module-level limiters shared across the process -----------------------
-
-NAVIGATE_MAX_PER_MINUTE = 20
-navigate_rate_limiter = SlidingWindowRateLimiter(
-    max_events=NAVIGATE_MAX_PER_MINUTE, window_seconds=60.0
-)
 
 CHAT_MAX_TURNS_PER_MINUTE = 15
 chat_rate_limiter = SlidingWindowRateLimiter(

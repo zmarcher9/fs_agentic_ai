@@ -51,7 +51,7 @@ SIDEBAR_JS = """(args) => {
     dot.setAttribute('style', 'all:initial !important; width:10px !important; height:10px !important; border-radius:50% !important; background:#ff6600 !important; display:inline-block !important;');
     const title = document.createElement('span');
     title.setAttribute('style', 'all:initial !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important; font-size:13px !important; font-weight:600 !important; color:#1a1a1a !important;');
-    title.textContent = 'FireMapSim AI Co-pilot';
+    title.textContent = 'FireMapSim Q&A Helper';
     const collapseBtn = document.createElement('button');
     collapseBtn.setAttribute('style', 'all:initial !important; margin-left:auto !important; background:transparent !important; border:none !important; color:#888 !important; font-size:18px !important; line-height:1 !important; cursor:pointer !important; padding:0 2px !important; font-family:-apple-system,Segoe UI,Roboto,sans-serif !important;');
     collapseBtn.textContent = String.fromCharCode(10005);
@@ -118,7 +118,7 @@ SIDEBAR_JS = """(args) => {
         'cursor: pointer', 'z-index: 2147483647', 'border: none',
         'font-size: 26px', 'box-sizing: border-box',
     ].join(' !important; ') + ' !important');
-    launcher.title = 'Open FireMapSim AI Co-pilot';
+    launcher.title = 'Open FireMapSim Q&A Helper';
     launcher.textContent = String.fromCodePoint(128293);
 
     const badge = document.createElement('span');

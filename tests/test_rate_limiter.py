@@ -18,9 +18,9 @@ async def test_sliding_window_allows_under_limit():
 @pytest.mark.asyncio
 async def test_enforce_raises():
     lim = SlidingWindowRateLimiter(max_events=1, window_seconds=60.0)
-    await lim.enforce("s1", "navigate")
+    await lim.enforce("s1", "chat turn")
     with pytest.raises(RateLimitExceededError):
-        await lim.enforce("s1", "navigate")
+        await lim.enforce("s1", "chat turn")
 
 
 @pytest.mark.asyncio

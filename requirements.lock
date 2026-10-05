@@ -14,7 +14,6 @@ certifi==2026.6.17
     # via
     #   httpcore
     #   httpx
-    #   pyproj
     #   requests
 charset-normalizer==3.4.9
     # via requests
@@ -98,8 +97,6 @@ playwright==1.60.0
     # via -r requirements.in
 pluggy==1.6.0
     # via pytest
-psutil==7.2.2
-    # via -r requirements.in
 pydantic==2.13.4
     # via
     #   -r requirements.in
@@ -118,8 +115,6 @@ pyee==13.0.1
     # via playwright
 pygments==2.20.0
     # via pytest
-pyproj==3.7.2
-    # via -r requirements.in
 pytest==9.0.3
     # via
     #   -r requirements.in

@@ -1,51 +1,39 @@
-"""Tests for agent config/UI tools."""
+"""Tests for the agent's UI help tool."""
 
 import json
 
-import pytest
+from app.agent.tools_ui_help import _UI_STEPS, explain_ui_step
+from playwright_guide.highlighting import KEYWORD_MAP, STEP_SELECTORS
 
-from app.agent.tools_config import build_project_config
-from app.agent.tools_ui_help import explain_ui_step
-
-
-def test_build_project_config_valid() -> None:
-    out = build_project_config.invoke(
-        {
-            "center_lat": 33.749,
-            "center_lon": -84.388,
-            "cell_resolution": 30,
-            "cell_space_dimension": 200,
-            "wind_speed": 10,
-            "wind_degree": 90,
-            "total_sim_time": 12000,
-        }
-    )
-    parsed = json.loads(out)
-    assert parsed["windDegree"] == 90
-
-
-def test_build_project_config_invalid_resolution() -> None:
-    with pytest.raises(ValueError, match="cell_resolution"):
-        build_project_config.invoke(
-            {
-                "center_lat": 33.749,
-                "center_lon": -84.388,
-                "cell_resolution": 7,
-                "cell_space_dimension": 200,
-                "wind_speed": 10,
-                "wind_degree": 0,
-                "total_sim_time": 12000,
-            }
-        )
+# _UI_STEPS entries that cover several controls (or a control with no
+# stable selector yet), so they have no single STEP_SELECTORS key.
+_MULTI_CONTROL_STEPS = {"set_dynamic_ignition", "wind_settings", "show_results"}
 
 
 def test_explain_ui_step_known() -> None:
-    out = explain_ui_step.invoke({"step": "set_line_ignition"})
-    assert "Left-click" in out
+    out = json.loads(explain_ui_step.invoke({"step": "set_line_ignition"}))
+    assert out["step"] == "set_line_ignition"
+    assert "Left-click" in out["instructions"]
 
 
 def test_explain_ui_step_unknown() -> None:
-    out = explain_ui_step.invoke({"step": "not_a_real_step"})
-    parsed = json.loads(out)
-    assert parsed["error"] == "Unknown step"
-    assert "set_line_ignition" in parsed["available_steps"]
+    out = json.loads(explain_ui_step.invoke({"step": "not_a_real_step"}))
+    assert out["error"] == "Unknown step"
+    assert "set_line_ignition" in out["available_steps"]
+
+
+def test_ui_step_keys_match_highlight_selectors() -> None:
+    # Both files must name the same control the same way (this drifted once:
+    # "cell_space_dimension" vs "cell_dimension").
+    unmatched = set(_UI_STEPS) - set(STEP_SELECTORS) - _MULTI_CONTROL_STEPS
+    assert not unmatched
+
+
+def test_keyword_map_targets_exist() -> None:
+    assert {key for _, key in KEYWORD_MAP} <= set(STEP_SELECTORS)
+
+
+def test_ui_steps_have_no_actuation_era_phrasing() -> None:
+    stale = ("already moved", "apply on the config", "assistant provided", "automatically")
+    for key, text in _UI_STEPS.items():
+        assert not any(phrase in text.lower() for phrase in stale), key

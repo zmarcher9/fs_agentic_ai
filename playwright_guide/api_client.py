@@ -28,8 +28,7 @@ def get_session_id() -> str:
 def chat(message: str) -> dict:
     """
     Send a message to the firesim-ai agent and return the parsed response
-    ({"reply", "session_id", "navigated_to"}). navigated_to is set when this
-    turn moved the map — the caller uses it to re-pan guide.py's own page.
+    ({"reply", "session_id"}).
     """
     session_id = get_session_id()
     resp = requests.post(

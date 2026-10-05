@@ -5,13 +5,11 @@ with server-issued, unguessable tokens.
 Call issue_session_token() wherever a chat session starts (first
 /chat request, or a dedicated POST /api/session). The returned token
 should become both:
-  - the X-Session-Id your client sends on every subsequent request,
-    including /api/map/navigate
+  - the X-Session-Id your client sends on every subsequent request
   - the thread_id passed into the LangGraph agent
 
-so navigate and chat are bound to the exact same identity end to end —
-once tokens aren't guessable, you can't drive someone else's browser
-context by guessing an id.
+so once tokens aren't guessable, you can't read or append to someone
+else's conversation by guessing an id.
 
 In-memory registry — fine at demo scale, single process. Move to
 Redis/a DB if you run multiple workers or need sessions to survive a
