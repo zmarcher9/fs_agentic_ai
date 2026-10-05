@@ -33,10 +33,7 @@ function Get-ErrorDetail($err) {
 Write-Host "firesim-ai chat - connecting to $ApiBaseUrl ..." -ForegroundColor DarkGray
 
 try {
-    $health = Invoke-RestMethod -Uri "$ApiBaseUrl/health" -Method GET
-    if (-not $health.browser_connected) {
-        Write-Host "Warning: browser_connected is false - map navigation replies may fail, but chat will still work." -ForegroundColor Yellow
-    }
+    Invoke-RestMethod -Uri "$ApiBaseUrl/health" -Method GET | Out-Null
 } catch {
     Write-Host "Could not reach $ApiBaseUrl/health - is the container running? ($($_.Exception.Message))" -ForegroundColor Red
     exit 1

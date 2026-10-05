@@ -1,13 +1,15 @@
 """
 demo/run_demo.py
 
-End-to-end scripted demo for the firesim-ai project.
-Walks through the Canton, GA prescribed burn scenario:
+End-to-end scripted demo for the firesim-ai Q&A helper.
+Asks the kinds of questions a first-time FireMapSim user would ask while
+setting up a prescribed burn:
 
-    natural language input
-        → geocoding + coordinate conversion
-        → simulation config JSON
-        → step-by-step UI narration
+    "how do I use this control?"   → plain-English UI steps
+    "what does this setting mean?" → background explanation
+    "just do it for me"            → declines, says what to click instead
+
+The helper never moves the map or fills in fields — the user does.
 
 Run with:
     python demo/run_demo.py
@@ -19,9 +21,9 @@ Optional: also start the Playwright guide in a second terminal:
     python playwright/guide.py
 
 Thread / session ID:
-    Chat and map navigate require a server-issued X-Session-Id from
-    POST /api/session. This script issues one on first chat (or reuses
-    FIRESIM_SESSION_ID). Share that value with playwright/guide.py:
+    Chat requires a server-issued X-Session-Id from POST /api/session.
+    This script issues one on first chat (or reuses FIRESIM_SESSION_ID).
+    Share that value with playwright/guide.py:
 
         $env:FIRESIM_SESSION_ID = "<token from demo>"
 
@@ -145,66 +147,53 @@ TURNS: list[tuple[str, str]] = [
     # (label, user message)
 
     (
-        "1. Natural-language setup request",
-        "I need to set up a prescribed burn simulation near Canton, GA. "
-        "The burn area is about 500 acres and I want to run it for 3 hours."
+        "1. Getting oriented",
+        "I'm new to FireMapSim. What are the main steps to set up and run "
+        "a prescribed burn simulation?"
     ),
     (
-        "2. Ask for coordinate details",
-        "What coordinates did you calculate for Canton, GA, and what "
-        "projection will you use for the simulation grid?"
+        "2. UI how-to — project location",
+        "How do I set the project location to my farm near Canton, GA?"
     ),
     (
-        "3. Ask for the full configuration summary",
-        "Can you summarize the complete simulation configuration for this "
-        "Canton burn, including cell resolution, grid size, wind parameters, "
-        "and the location coordinates?"
+        "3. Asking the helper to act (it should decline)",
+        "Can you just move the map to Canton, GA for me?"
     ),
     (
-        "4. Ask about wind conditions",
-        "For a controlled burn in Cherokee County in spring, what wind speed "
-        "and direction would be typical? Update the config if needed."
+        "4. Background — grid settings",
+        "What's the difference between Cell Resolution and Cell Space "
+        "Dimension, and how do they affect the size of the area?"
     ),
     (
-        "5. UI step — Set Project Location",
-        "Walk me through setting the project location in FireMapSim for "
-        "the Canton coordinates."
+        "5. UI how-to — terrain and fuel",
+        "How do I see the fuel and slope for my area? Do I have to?"
     ),
     (
-        "6. UI step — Cell resolution",
-        "What cell resolution and grid dimension should I select in the "
-        "Cell Resolution and Cell Space Dimension dropdowns?"
+        "6. UI how-to — ignition lines",
+        "Our burn will use two ignition teams working inward from the north "
+        "and south edges. How do I draw those ignition lines?"
     ),
     (
-        "7. UI step — Terrain and fuel data",
-        "How do I load the terrain and fuel data for this Canton area "
-        "once the grid boundary is set?"
+        "7. UI how-to — wind",
+        "Where do I enter wind speed and direction? Which way is 90 degrees?"
     ),
     (
-        "8. UI step — Ignition lines",
-        "The prescribed burn will use two ignition teams working inward "
-        "from the north and south edges. How do I draw those ignition lines?"
+        "8. Asking the helper to fill fields (it should decline)",
+        "Set the wind to 15 km/h from the southwest and the duration to 3 hours."
     ),
     (
-        "9. UI step — Simulation parameters",
-        "Where do I enter the simulation duration and wind settings in "
-        "the FireMapSim interface?"
+        "9. Background — fuel breaks",
+        "What is a fuel break, and how do I add one?"
     ),
     (
-        "10. UI step — Start simulation",
-        "Everything looks good. How do I start the simulation run?"
-    ),
-    (
-        "11. Wrap-up summary",
-        "Give me a quick summary of everything we configured for the "
-        "Canton, GA prescribed burn — coordinates, grid, wind, duration — "
-        "so I can save it for the record."
+        "10. UI how-to — run and review",
+        "How do I start the simulation and then watch how the fire spread?"
     ),
 ]
 
 
 def main() -> None:
-    header("firesim-ai  ·  Canton, GA Prescribed Burn Demo")
+    header("firesim-ai  ·  FireMapSim Q&A Helper Demo")
     session_id = get_session_id()
     print(f"  Session ID: {session_id[:16]}…")
     print(f"  API URL   : {API_URL}")

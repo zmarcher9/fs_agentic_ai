@@ -1,10 +1,11 @@
 """
 playwright/guide.py
 
-FireMapSim live co-pilot.
-Launches or attaches to the real FireMapSim page (FIREMAP_URL), injects a
-free-text chat sidebar wired to the local firesim-ai API, and highlights
-the UI control the agent is talking about as you chat.
+FireMapSim live Q&A helper.
+Launches the real FireMapSim page (FIREMAP_URL), injects a free-text chat
+sidebar wired to the local firesim-ai API, and highlights the UI control
+the agent is talking about as you chat. The agent only explains and points
+— it never moves the map or fills in fields; you operate the page yourself.
 
 Usage:
     python playwright/guide.py
@@ -35,10 +36,8 @@ from playwright.sync_api import sync_playwright
 # Add the project root to sys.path so we can import app.config and playwright_guide.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import get_settings
-from app.core.map_bounds import DEFAULT_ZOOM
 from playwright_guide.api_client import chat as api_chat
 from playwright_guide.highlighting import STEP_SELECTORS, detect_step, highlight_off, highlight_on
-from playwright_guide.map_sync import pan_map_live
 from playwright_guide.sidebar import (
     append_agent_error,
     append_agent_reply,
@@ -57,8 +56,8 @@ FIRESIM_BASE = _settings.firemap_url
 SIDEBAR_WIDTH = 360
 
 WELCOME_MESSAGE = (
-    "Ask me anything about setting up your prescribed burn simulation - "
-    "location, wind, cell resolution, ignition lines, and more."
+    "Ask me anything about FireMapSim - how a control works, where to find "
+    "it, or what a setting means. I'll point to it on the page while I explain."
 )
 
 
@@ -101,7 +100,7 @@ def main() -> None:
 
         print(f"Opening FireMapSim at {FIRESIM_BASE} ...")
         # No lat/lng/zoom seeded here — FireMapSim opens at its own default
-        # view; the user or agent moves the map from there via chat.
+        # view and the user moves the map themselves.
         page.goto(FIRESIM_BASE, wait_until="domcontentloaded", timeout=60000)
         # Wait for Mapbox canvas — networkidle can hang on tile streaming.
         try:
@@ -116,7 +115,7 @@ def main() -> None:
         # Inject the collapsed launcher button + hidden chat sidebar.
         inject_sidebar(page, SIDEBAR_WIDTH, WELCOME_MESSAGE)
 
-        print("Ready. Click the orange button (bottom-right) to open the co-pilot")
+        print("Ready. Click the orange button (bottom-right) to open the helper")
         print("and type a message. Close the browser window to end the session.\n")
 
         active_selector: str | None = None
@@ -142,17 +141,6 @@ def main() -> None:
             reply = response["reply"]
             display_text = clean_for_display(reply)
             narrate(reply)
-
-            # The agent's navigate_map call moved its own headless tab, not
-            # this page — re-pan here so what the user is looking at moves too.
-            navigated_to = response.get("navigated_to")
-            if navigated_to:
-                pan_map_live(
-                    page,
-                    navigated_to["lat"],
-                    navigated_to["lon"],
-                    navigated_to.get("zoom") or DEFAULT_ZOOM,
-                )
 
             # Clear the previous highlight before applying the next one.
             if active_selector:
