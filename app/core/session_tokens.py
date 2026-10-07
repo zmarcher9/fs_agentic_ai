@@ -6,7 +6,7 @@ Call issue_session_token() wherever a chat session starts (first
 /chat request, or a dedicated POST /api/session). The returned token
 should become both:
   - the X-Session-Id your client sends on every subsequent request
-  - the thread_id passed into the LangGraph agent
+  - the thread_id that keys the agent's conversation history
 
 so once tokens aren't guessable, you can't read or append to someone
 else's conversation by guessing an id.
@@ -26,11 +26,25 @@ DEFAULT_TOKEN_TTL_SECONDS = 4 * 60 * 60  # 4 hours
 
 _sessions: dict[str, float] = {}  # token -> issued_at (wall clock)
 
+# Expired tokens are otherwise only dropped when someone looks them up again,
+# which an abandoned session never does. Sweep on issue once the registry is
+# big enough for the O(n) scan to be worth it.
+_EXPIRED_SWEEP_THRESHOLD = 1000
+
+
+def _sweep_expired(now: float, ttl_seconds: float = DEFAULT_TOKEN_TTL_SECONDS) -> None:
+    expired = [token for token, issued_at in _sessions.items() if now - issued_at > ttl_seconds]
+    for token in expired:
+        del _sessions[token]
+
 
 def issue_session_token() -> str:
     """Generate a new, unguessable session token and register it as valid."""
+    now = time.time()
+    if len(_sessions) >= _EXPIRED_SWEEP_THRESHOLD:
+        _sweep_expired(now)
     token = secrets.token_urlsafe(32)
-    _sessions[token] = time.time()
+    _sessions[token] = now
     return token
 
 

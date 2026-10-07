@@ -15,19 +15,20 @@ The script:
   2. Injects a collapsed floating launcher button; click it to open the sidebar.
   3. Lets you type any message into the sidebar and sends it to the local
      firesim-ai API (localhost:8000/chat).
-  4. Parses the agent reply to detect which UI element it's talking about.
-  5. Scrolls to + visually highlights that element on the live page.
-  6. Appends the agent's reply to the chat transcript in the sidebar.
-  7. Keeps chatting until you close the browser window.
+  4. Appends the agent's reply to the chat transcript in the sidebar.
+  5. Scrolls to + outlines the control the reply is about (the first key in
+     /chat's `highlight` list that has a selector).
+  6. Keeps chatting until you close the browser window. Page reloads are
+     fine — the sidebar is re-injected.
 
-Requires:
-    pip install playwright requests
-    playwright install chromium
+Requires (from the project root):
+    python -m pip install -r requirements.txt
+    python -m playwright install chromium
+    the API running (python -m uvicorn api.main:app --port 8000)
 """
 
 import sys
 import os
-import re
 import textwrap
 import time
 
@@ -36,12 +37,13 @@ from playwright.sync_api import sync_playwright
 # Add the project root to sys.path so we can import app.config and playwright_guide.
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import get_settings
+from app.core.text_format import strip_markdown
 from playwright_guide.api_client import chat as api_chat
-from playwright_guide.highlighting import STEP_SELECTORS, detect_step, highlight_off, highlight_on
+from playwright_guide.highlighting import STEP_SELECTORS, highlight_off, highlight_on, pick_highlight
 from playwright_guide.sidebar import (
     append_agent_error,
     append_agent_reply,
-    inject_sidebar,
+    install_sidebar,
     wait_for_user_message,
 )
 
@@ -62,19 +64,9 @@ WELCOME_MESSAGE = (
 
 
 def clean_for_display(text: str) -> str:
-    """
-    Prepare agent text for display: strip JSON fences, markdown, and any
-    double-escaped quotes that slipped through serialization.
-    """
-    text = re.sub(r"```json[\s\S]*?```", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"```[\s\S]*?```", "", text)
-    text = text.replace("`", "")
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = re.sub(r"\*(.+?)\*", r"\1", text)
-    # Fix double-escaped quotes from legacy manual JS escaping.
-    text = text.replace("\\'", "'").replace('\\"', '"')
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    """Plain text for the sidebar bubble. The API already strips markdown;
+    this guards against an older server."""
+    return strip_markdown(text)
 
 
 def narrate(reply: str) -> None:
@@ -98,6 +90,10 @@ def main() -> None:
         context = browser.new_context(no_viewport=True)
         page    = context.new_page()
 
+        # Registered before the first load and re-run on every reload, so a
+        # navigation inside FireMapSim (e.g. login) doesn't end the session.
+        install_sidebar(page, SIDEBAR_WIDTH, WELCOME_MESSAGE)
+
         print(f"Opening FireMapSim at {FIRESIM_BASE} ...")
         # No lat/lng/zoom seeded here — FireMapSim opens at its own default
         # view and the user moves the map themselves.
@@ -112,19 +108,16 @@ def main() -> None:
         # Let the Vue app and Mapbox finish initializing.
         time.sleep(2)
 
-        # Inject the collapsed launcher button + hidden chat sidebar.
-        inject_sidebar(page, SIDEBAR_WIDTH, WELCOME_MESSAGE)
-
         print("Ready. Click the orange button (bottom-right) to open the helper")
         print("and type a message. Close the browser window to end the session.\n")
 
-        active_selector: str | None = None
-
-        while True:
+        while not page.is_closed():
             try:
                 user_msg = wait_for_user_message(page)
             except Exception:
                 break  # page/browser was closed
+            if user_msg is None:
+                continue  # page reloaded mid-wait; sidebar is re-injected
 
             print(f"\nUser: {user_msg}")
 
@@ -135,30 +128,28 @@ def main() -> None:
                 try:
                     append_agent_error(page, "Sorry, I ran into a problem reaching the assistant. Please try again.")
                 except Exception:
-                    break
+                    pass  # page reloaded; the loop exits if it actually closed
                 continue
 
             reply = response["reply"]
-            display_text = clean_for_display(reply)
             narrate(reply)
 
-            # Clear the previous highlight before applying the next one.
-            if active_selector:
-                highlight_off(page, active_selector)
-                active_selector = None
+            # Show the reply first: highlighting may have to scroll.
+            try:
+                append_agent_reply(page, clean_for_display(reply))
+            except Exception:
+                continue
 
-            step_key = detect_step(reply)
-            if step_key and step_key in STEP_SELECTORS:
-                selector = STEP_SELECTORS[step_key]
-                highlight_on(page, selector, str(step_key))
-                active_selector = selector
+            # Clear the previous highlight before applying the next one.
+            highlight_off(page)
+
+            # The server's highlight list decides; text matching is only a
+            # fallback for an older server that doesn't send the field.
+            step_key = pick_highlight(response.get("highlight"), reply)
+            if step_key:
+                highlight_on(page, STEP_SELECTORS[step_key], step_key)
             else:
                 print("  (no highlight for this reply)")
-
-            try:
-                append_agent_reply(page, display_text)
-            except Exception:
-                break
 
         print("\nSession ended (browser closed).")
         try:

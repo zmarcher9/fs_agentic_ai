@@ -41,3 +41,23 @@ def test_production_rejects_localhost_cors():
 
     with pytest.raises(ValueError, match="localhost"):
         settings.validate_runtime()
+
+
+@pytest.mark.parametrize("raw, expected", [("", None), ("low", "low"), ("high", "high")])
+def test_reasoning_effort_parsing(raw, expected):
+    settings = Settings(_env_file=None, LLM_REASONING_EFFORT=raw)
+    assert settings.llm_reasoning_effort == expected
+
+
+@pytest.mark.parametrize("field, raw", [("LLM_REASONING_EFFORT", "none"), ("LLM_REASONING_EFFORT", "LOW"),
+                                        ("LLM_HISTORY_TURNS", "-1"), ("LLM_MAX_OUTPUT_TOKENS", "10")])
+def test_invalid_llm_settings_are_rejected(field, raw):
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, **{field: raw})
+
+
+def test_llm_defaults():
+    settings = Settings(_env_file=None)
+    assert settings.llm_model == "anthropic/claude-sonnet-5.5"
+    assert settings.llm_reasoning_effort == "low"
+    assert settings.llm_history_turns == 6

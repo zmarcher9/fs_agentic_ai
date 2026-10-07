@@ -5,12 +5,18 @@ used by playwright/guide.py.
 Submitting a message in the sidebar sets window.__fsai_pending__;
 guide.py's main() polls for it via wait_for_user_message(), calls the API,
 then hands the reply to window.__fsai_append_agent__ via append_agent_reply().
+install_sidebar() registers the panel as an init script, so a page reload
+brings it back (with a fresh transcript) instead of ending the guide.
 """
+
+import json
 
 from playwright.sync_api import Page
 
 SIDEBAR_JS = """(args) => {
     const [width, welcome] = args;
+    // Top-level page only: the init script also runs in iframes and SSO pages.
+    if (window.top !== window) return;
     if (document.getElementById('__fsai_sidebar__')) return;
 
     const panel = document.createElement('div');
@@ -82,6 +88,7 @@ SIDEBAR_JS = """(args) => {
     const input = document.createElement('input');
     input.id = '__fsai_input__';
     input.type = 'text';
+    input.maxLength = 2000;  // the API's message limit (api/main.py MAX_MESSAGE_CHARS)
     input.placeholder = 'Ask about your burn setup...';
     input.setAttribute('style', [
         'all: initial', 'flex: 1 1 auto', 'min-width: 0', 'padding: 8px 10px',
@@ -256,11 +263,22 @@ SIDEBAR_JS = """(args) => {
 }"""
 
 
-def inject_sidebar(page: Page, width: int, welcome: str) -> None:
+def install_sidebar(page: Page, width: int, welcome: str) -> None:
     """
-    Inject a collapsed floating launcher button plus a hidden right sidebar
+    Install a collapsed floating launcher button plus a hidden right sidebar
     chat panel: a scrolling transcript, a text input, and a Send button.
+
+    Registered as an init script so it is re-injected after every reload or
+    navigation (e.g. a login redirect), and also injected into the current
+    document in case it has already loaded. SIDEBAR_JS is idempotent.
     """
+    init_script = (
+        "(() => { const run = () => (" + SIDEBAR_JS + ")(" + json.dumps([width, welcome]) + ");"
+        " if (document.readyState === 'loading') {"
+        " document.addEventListener('DOMContentLoaded', run, { once: true }); }"
+        " else { run(); } })();"
+    )
+    page.add_init_script(init_script)
     try:
         page.evaluate(SIDEBAR_JS, [width, welcome])
         print("  -> Sidebar injected (collapsed).")
@@ -268,12 +286,28 @@ def inject_sidebar(page: Page, width: int, welcome: str) -> None:
         print(f"  !  Sidebar injection failed: {exc}")
 
 
-def wait_for_user_message(page: Page) -> str:
-    """Block until the sidebar's Send button (or Enter) sets a pending message."""
-    page.wait_for_function("() => window.__fsai_pending__ !== null", timeout=0)
-    msg = page.evaluate("() => window.__fsai_pending__")
-    page.evaluate("() => { window.__fsai_pending__ = null; }")
-    return msg
+def wait_for_user_message(page: Page) -> str | None:
+    """
+    Block until the sidebar's Send button (or Enter) sets a pending message.
+
+    Returns None if the page navigated or reloaded mid-wait — the caller
+    should just wait again (the init script re-injects the sidebar). Raises
+    only if the page itself is gone.
+    """
+    try:
+        # typeof check, not `!== null`: after a reload the flag is undefined,
+        # which `!== null` would treat as a pending message.
+        page.wait_for_function(
+            "() => typeof window.__fsai_pending__ === 'string'", timeout=0
+        )
+        msg = page.evaluate(
+            "() => { const m = window.__fsai_pending__; window.__fsai_pending__ = null; return m; }"
+        )
+    except Exception:
+        if page.is_closed():
+            raise
+        return None
+    return msg if isinstance(msg, str) and msg.strip() else None
 
 
 def append_agent_reply(page: Page, text: str) -> None:
