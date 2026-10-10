@@ -1,1 +1,1 @@
-"""Core utilities shared across FireMapSim agent and simulation modules."""
+"""Core utilities shared by the FireMapSim agent and API (rate limits, sessions, sanitizing)."""

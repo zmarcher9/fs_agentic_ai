@@ -20,36 +20,31 @@ Requires the FastAPI server to be running:
 Optional: also start the Playwright guide in a second terminal:
     python playwright/guide.py
 
-Thread / session ID:
+Session ID:
     Chat requires a server-issued X-Session-Id from POST /api/session.
-    This script issues one on first chat (or reuses FIRESIM_SESSION_ID).
-    Share that value with playwright/guide.py:
-
-        $env:FIRESIM_SESSION_ID = "<token from demo>"
-
+    This script issues one after the health check (or reuses
+    FIRESIM_SESSION_ID if set) via playwright_guide.api_client.
 """
 
 import os
+import sys
 import time
 import textwrap
+
 import requests
 
+# Run as `python demo/run_demo.py`: put the project root on sys.path so
+# `app` and `playwright_guide` import (same as playwright/guide.py).
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import get_settings
+from playwright_guide.api_client import API_BASE_URL, API_URL, get_session_id
+from playwright_guide.api_client import chat as api_chat
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-_settings = get_settings()
-API_BASE_URL = _settings.api_base_url.rstrip("/")
-FIREMAP_URL = _settings.firemap_url
-API_URL = f"{API_BASE_URL}/chat"
-SESSION_URL = f"{API_BASE_URL}/api/session"
-
-# Prefer a server-issued token from a prior /api/session call (share across
-# demo + guide via FIRESIM_SESSION_ID). Otherwise a fresh token is issued
-# on first chat().
-_SESSION_ID = os.environ.get("FIRESIM_SESSION_ID")
+FIREMAP_URL = get_settings().firemap_url
 
 # Width for terminal output formatting
 TERM_WIDTH = 72
@@ -93,17 +88,6 @@ def print_agent(reply: str) -> None:
             print(f"    {wrapped}")
 
 
-def get_session_id() -> str:
-    global _SESSION_ID
-    if _SESSION_ID:
-        return _SESSION_ID
-    resp = requests.post(SESSION_URL, timeout=30)
-    resp.raise_for_status()
-    _SESSION_ID = resp.json()["session_id"]
-    print(f"  (Issued session_id={_SESSION_ID[:12]}… — set FIRESIM_SESSION_ID to reuse)")
-    return _SESSION_ID
-
-
 def chat(message: str, pause: float = 0.5) -> str:
     """
     POST to /chat, return the agent reply.
@@ -111,15 +95,7 @@ def chat(message: str, pause: float = 0.5) -> str:
     """
     time.sleep(pause)
     try:
-        session_id = get_session_id()
-        resp = requests.post(
-            API_URL,
-            json={"message": message},
-            headers={"X-Session-Id": session_id},
-            timeout=180,
-        )
-        resp.raise_for_status()
-        return resp.json()["reply"]
+        return api_chat(message)["reply"]
     except requests.exceptions.ConnectionError:
         return (
             f"[ERROR] Could not reach the firesim-ai API at {API_BASE_URL}.\n"
@@ -194,16 +170,11 @@ TURNS: list[tuple[str, str]] = [
 
 def main() -> None:
     header("firesim-ai  ·  FireMapSim Q&A Helper Demo")
-    session_id = get_session_id()
-    print(f"  Session ID: {session_id[:16]}…")
     print(f"  API URL   : {API_URL}")
     print(f"  Turns     : {len(TURNS)}")
-    print()
-    print("  Share with playwright/guide.py via:")
-    print(f"    $env:FIRESIM_SESSION_ID = '{session_id}'")
-    print()
 
-    # Check the API is up before starting
+    # Check the API is up before issuing a session, so a down server gets
+    # the friendly message below rather than a traceback.
     section("Health check")
     try:
         resp = requests.get(f"{API_BASE_URL}/health", timeout=5)
@@ -216,6 +187,8 @@ def main() -> None:
         print("      python -m uvicorn api.main:app --reload --port 8000")
         return
 
+    session_id = get_session_id()
+    print(f"  Session ID: {session_id[:16]}…")
     print()
     input("  Press ENTER to begin the demo …")
     print()
@@ -231,10 +204,9 @@ def main() -> None:
     divider("═")
     print()
     print("  Next steps:")
-    print(f"  1. Open {FIREMAP_URL} in your browser.")
-    print("  2. Set the same session for the guide:")
-    print(f"       $env:FIRESIM_SESSION_ID = '{session_id}'")
-    print("  3. Run:  python playwright/guide.py")
+    print(f"  1. Make sure FireMapSim is running at {FIREMAP_URL}.")
+    print("  2. Run:  python playwright/guide.py")
+    print("     It opens FireMapSim with the chat sidebar and highlights controls.")
     print()
     divider("═")
 

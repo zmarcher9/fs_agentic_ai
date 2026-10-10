@@ -41,3 +41,16 @@ def test_expired_token_is_invalid(monkeypatch):
 
     st._sessions[token] = time.time() - (st.DEFAULT_TOKEN_TTL_SECONDS + 10)
     assert not is_valid_session(token)
+
+
+def test_issuing_sweeps_expired_tokens_once_registry_is_large(monkeypatch):
+    from app.core import session_tokens as st
+
+    monkeypatch.setattr(st, "_EXPIRED_SWEEP_THRESHOLD", 3)
+    stale = [issue_session_token() for _ in range(3)]
+    for token in stale:
+        st._sessions[token] = time.time() - (st.DEFAULT_TOKEN_TTL_SECONDS + 10)
+
+    fresh = issue_session_token()
+
+    assert set(st._sessions) == {fresh}

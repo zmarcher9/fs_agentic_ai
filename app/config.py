@@ -34,12 +34,37 @@ class Settings(BaseSettings):
     openrouter_base_url: str = Field(
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
     )
+    # OpenRouter model id. Sonnet 5.5 at low effort passed every check in the
+    # 12-question comparison at ~$0.008/question; Haiku 4.5 was cheaper but
+    # returned an empty answer, and Opus 5.5 cost ~2x with no visible gain.
     llm_model: str = Field(
-        default="anthropic/claude-sonnet-4", alias="LLM_MODEL"
+        default="anthropic/claude-sonnet-5.5", alias="LLM_MODEL"
     )
     llm_max_concurrent_turns: int = Field(
         default=4, ge=1, alias="LLM_MAX_CONCURRENT_TURNS"
     )
+    # Per provider request. Without it a hung provider holds a concurrency
+    # slot (and the session lock) forever.
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, alias="LLM_TIMEOUT_SECONDS")
+    llm_max_retries: int = Field(default=2, ge=0, alias="LLM_MAX_RETRIES")
+    # Per call, including reasoning tokens. Comparison replies averaged ~350
+    # output tokens at low effort; this leaves room without letting one call
+    # run up an unbounded bill.
+    llm_max_output_tokens: int = Field(default=2048, ge=256, alias="LLM_MAX_OUTPUT_TOKENS")
+    # Past exchanges resent with each question. Every one is re-billed on
+    # every turn, so this caps how expensive a long session gets.
+    llm_history_turns: int = Field(default=6, ge=0, alias="LLM_HISTORY_TURNS")
+    # OpenRouter's `reasoning.effort` for models that think (e.g. Sonnet 5.5).
+    # "low" cut cost ~25% vs the default with no failed checks; blank = the
+    # provider's default.
+    llm_reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+        default="low", alias="LLM_REASONING_EFFORT"
+    )
+
+    @field_validator("llm_reasoning_effort", mode="before")
+    @classmethod
+    def _blank_effort_is_unset(cls, value):
+        return None if value == "" else value
 
     firemap_url: str = Field(default="http://localhost:5173", alias="FIREMAP_URL")
 

@@ -3,7 +3,8 @@ Generic per-key sliding-window rate limiter.
 
 Two things live here:
   - SlidingWindowRateLimiter: caps N events per key per time window.
-    Used by chat_rate_limiter (enforced per /chat turn in api/main.py).
+    Used by chat_rate_limiter (per /chat turn) and session_issue_limiter
+    (per client IP on /api/session) in api/main.py.
   - SessionTokenBudget: caps LLM token usage per session per window.
 
 In-memory, per-process — fine at demo scale. Move to Redis/similar if
@@ -51,8 +52,9 @@ class SlidingWindowRateLimiter:
         """Raises RateLimitExceededError instead of returning False."""
         allowed = await self.check(key)
         if not allowed:
+            # The key is a session token or client IP — never echo it back.
             raise RateLimitExceededError(
-                f"Rate limit exceeded for {action} (session {key!r}): "
+                f"Rate limit exceeded for {action}: "
                 f"max {self.max_events} per {self.window_seconds:.0f}s"
             )
 
@@ -64,13 +66,29 @@ chat_rate_limiter = SlidingWindowRateLimiter(
     max_events=CHAT_MAX_TURNS_PER_MINUTE, window_seconds=60.0
 )
 
+# Keyed by client IP. Without this, minting a fresh session resets every
+# per-session limit. Behind a reverse proxy all clients share the proxy's IP,
+# so keep this generous.
+SESSION_ISSUES_PER_MINUTE = 20
+session_issue_limiter = SlidingWindowRateLimiter(
+    max_events=SESSION_ISSUES_PER_MINUTE, window_seconds=60.0
+)
+
 
 class SessionTokenBudget:
     """
     Per-session LLM token budget so a hijacked or looping agent can't
-    burn unbounded quota. Call
-        await llm_token_budget.enforce(session_id, tokens=usage)
-    after each agent turn.
+    burn unbounded quota.
+
+    Usage per turn (app/agent/agent.run_agent, inside the session lock):
+        await llm_token_budget.ensure_available(session_id)   # before the LLM call
+        ...call the model...
+        llm_token_budget.record_now(session_id, tokens)       # always, in a finally
+
+    Checking before the call is what actually caps spend: once a session is
+    over budget no further LLM call is made. Recording always succeeds, so a
+    turn that pushes the session over — or fails after being billed — is
+    still counted.
     """
 
     def __init__(self, max_tokens_per_window: int, window_seconds: float = 3600.0):
@@ -82,21 +100,34 @@ class SessionTokenBudget:
     def reset(self) -> None:
         self._usage.clear()
 
-    async def enforce(self, session_id: str, tokens: int) -> None:
+    def _used(self, session_id: str, now: float) -> int:
+        window_start = now - self.window_seconds
+        entries = self._usage[session_id]
+        while entries and entries[0][0] < window_start:
+            entries.pop(0)
+        return sum(t for _, t in entries)
+
+    async def ensure_available(self, session_id: str) -> None:
+        """Raise if the session has already used its whole budget."""
         async with self._lock:
-            now = time.monotonic()
-            window_start = now - self.window_seconds
-            entries = self._usage[session_id]
-            while entries and entries[0][0] < window_start:
-                entries.pop(0)
-            used = sum(t for _, t in entries)
-            if used + tokens > self.max_tokens_per_window:
+            used = self._used(session_id, time.monotonic())
+            if used >= self.max_tokens_per_window:
                 raise RateLimitExceededError(
-                    f"Session {session_id!r} exceeded token budget: "
-                    f"{used + tokens} > {self.max_tokens_per_window} per "
-                    f"{self.window_seconds:.0f}s"
+                    f"Token budget exhausted: {used} >= {self.max_tokens_per_window} "
+                    f"per {self.window_seconds:.0f}s"
                 )
-            entries.append((now, tokens))
+
+    def record_now(self, session_id: str, tokens: int) -> None:
+        """Record tokens a call actually spent. Never raises and never
+        awaits, so it is safe in a `finally` while a request is being
+        cancelled (no await means nothing can interleave on the loop)."""
+        now = time.monotonic()
+        self._used(session_id, now)  # trims expired entries
+        self._usage[session_id].append((now, max(0, tokens)))
+
+    async def record(self, session_id: str, tokens: int) -> None:
+        async with self._lock:
+            self.record_now(session_id, tokens)
 
 
 # Demo-scale default — tune against your real OpenRouter/Anthropic pricing.
