@@ -1,9 +1,9 @@
 """Plain-English FireMapSim per-control instructions (the agent's step reference).
 
 Content is grounded in the SIMS Lab FireMapSim project report and slides
-(Wei Zhao, 2025) and Dr. Hu's usage email. Facts those sources don't state
-(e.g. whether Wind Degree is the direction wind comes from or blows toward)
-are deliberately left out rather than guessed.
+(Wei Zhao, 2025) and Dr. Hu's usage email. Wind Degree is described as the
+direction the wind blows from (the standard convention); the sources don't
+state it, so this is an assumption.
 """
 
 import re
@@ -98,12 +98,12 @@ UI_STEPS: dict[str, str] = {
         "0–100, default 10)."
     ),
     "wind_degree": (
-        "Wind Degree is the number box next to Wind Speed. Type the direction in degrees on "
-        "the compass — 0 is North, 90 is East, 180 is South, 270 is West."
+        "Wind Degree is the number box next to Wind Speed. Type the direction the wind "
+        "blows from, in compass degrees — 0 is North, 90 is East, 180 is South, 270 is West."
     ),
     "wind_settings": (
         "Wind is set with two number boxes in the settings row: Wind Speed (km/h, 0–100) and "
-        "Wind Degree (compass degrees: 0 North, 90 East, 180 South, 270 West)."
+        "Wind Degree (compass degrees the wind blows from: 0 North, 90 East, 180 South, 270 West)."
     ),
     "map_style": (
         "Select Map Style is the dropdown in the top-left corner of the map. Pick terrain, "

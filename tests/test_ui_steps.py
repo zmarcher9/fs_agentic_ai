@@ -104,14 +104,15 @@ def test_ui_steps_have_no_actuation_era_phrasing() -> None:
         assert not any(phrase in text.lower() for phrase in stale), key
 
 
-def test_no_source_claims_a_wind_from_or_to_convention() -> None:
-    # FireMapSim's docs don't say whether Wind Degree is where the wind comes
-    # from or blows toward; the agent once told users "blowing from the north".
-    for text in [FIRESIM_SYSTEM_PROMPT, *UI_STEPS.values()]:
-        lower = text.lower()
-        assert "blowing from" not in lower
-        assert "wind from the north" not in lower
-    assert "does not say whether wind degree" in FIRESIM_SYSTEM_PROMPT.lower()
+def test_wind_degree_is_the_direction_wind_blows_from() -> None:
+    # FireMapSim's docs don't state the convention; we assume the standard
+    # meteorological one and every source must agree on it.
+    prompt = FIRESIM_SYSTEM_PROMPT.lower()
+    assert "wind degree is the direction the wind blows from" in prompt
+    assert "does not say whether wind degree" not in prompt
+    assert "blows from" in UI_STEPS["wind_degree"]
+    assert "blows from" in UI_STEPS["wind_settings"]
+    assert "isn't documented" not in prompt
 
 
 def test_prompt_uses_the_real_fuel_brake_label() -> None:

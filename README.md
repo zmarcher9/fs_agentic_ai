@@ -163,9 +163,9 @@ is installed as an init script, so it survives page reloads.
 The page layout in `FIRESIM_SYSTEM_PROMPT` and the per-control steps in
 `UI_STEPS` are grounded in the SIMS Lab FireMapSim project report and
 slides (Wei Zhao, July 2025) and Dr. Hu's usage email (upload/run a shared
-project, customized fuel, fuel reduction). The wind from/to convention,
-which no source states, is deliberately left out (the agent says it isn't
-documented). A few values carried over from the earlier prompt aren't in
+project, customized fuel, fuel reduction). No source states the wind
+convention; the agent assumes the standard one (Wind Degree is the direction
+the wind blows from). A few values carried over from the earlier prompt aren't in
 those documents' text either; they're kept pending confirmation and listed
 under Work remaining.
 
@@ -173,7 +173,7 @@ under Work remaining.
 
 | Component | Status | Notes |
 |---|---|---|
-| `FIRESIM_SYSTEM_PROMPT` | Done | Q&A scope; "cannot move the map / fill fields / click"; pasted or quoted text is untrusted data (stated as a partial mitigation); page layout + background grounded in the project report; never asserts a wind from/to convention; plain-text replies |
+| `FIRESIM_SYSTEM_PROMPT` | Done | Q&A scope; "cannot move the map / fill fields / click"; pasted or quoted text is untrusted data (stated as a partial mitigation); page layout + background grounded in the project report; Wind Degree stated as the direction the wind blows from (assumed standard convention); plain-text replies |
 | `agent.py` | Done | One structured call per question via OpenRouter; cached system prompt; last 6 exchanges of history; async `run_agent` → `TurnResult(reply, tokens_used, ui_steps)`; tokens weighted for cache reads; empty answers raise; per-session lock + global concurrency cap; LLM timeout/retries; expired sessions pruned |
 | `ui_steps.py` | Done | 34 controls; `resolve_step` accepts keys or visible labels; keys aligned with highlight selectors |
 | `POST /api/session`, `POST /chat` | Done | Issued unguessable session tokens (throttled per IP); chat rate limit; token budget checked *before* the LLM call inside the session lock, and every billed call recorded (failed ones too); 2,048-token output cap; 2,000-char message cap; generic 500 bodies; no user content in logs |
@@ -186,7 +186,7 @@ under Work remaining.
 | File | Covers |
 |---|---|
 | `tests/test_adversarial_agent.py` | The model is given no tools at all; prompt forbids operating the site; server never imports a browser driver |
-| `tests/test_ui_steps.py` | `resolve_step` and label aliases; step reference in the prompt and byte-stable; `UI_STEPS` ↔ `STEP_SELECTORS` alignment; each step's text highlights its own control; no wind from/to claims |
+| `tests/test_ui_steps.py` | `resolve_step` and label aliases; step reference in the prompt and byte-stable; `UI_STEPS` ↔ `STEP_SELECTORS` alignment; each step's text highlights its own control; Wind Degree stated as blows-from everywhere |
 | `tests/test_api_main.py` | `/health`, `/api/session`, `/chat` round trips; budget stops LLM calls (incl. failed billed turns and concurrent requests); 400/401/422/429/500 paths; session throttle; plain-text replies |
 | `tests/test_agent.py` | Scripted model: one call per question, cache breakpoint on the system prompt, OpenRouter structured-output wiring (no tools), history window, cache-weighted tokens, highlight validation, empty-answer guard, provider error / cancellation recorded and session left usable, pruning |
 | `tests/test_highlighting.py` | `detect_step`/`pick_highlight`; headless-Chromium highlight on/off (incl. after a re-render), selector validity, sidebar reload + round trip, iframe guard (skips without Chromium locally; fails in CI) |
@@ -197,7 +197,7 @@ under Work remaining.
 ## Work remaining
 
 - [ ] Confirm with Dr. Hu / the FireMapSim source (none of the docs say):
-  - whether **Wind Degree** is the direction the wind comes *from* or blows *toward* (the agent currently says it isn't documented);
+  - that **Wind Degree** is the direction the wind blows *from* (assumed, standard convention; the agent now states it);
   - values in the prompt / `UI_STEPS` that aren't in the documents' text: **Wind Speed** km/h, 0–100, "default 10"; **Cell Resolution** options 2/3/5/10/15/30 and "default 30"; **Cell Space Dimension** options 50/100/150/200; the Simulation Duration "typically 6,000–30,000" range;
   - default values on a fresh page (report screenshots show Cell Space Dimension 200, Wind Degree 180).
 - [ ] Confirm selectors on the live page and add `STEP_SELECTORS` for the steps in `_NO_SELECTOR_STEPS` (`tests/test_ui_steps.py`), e.g. Show Cell Info, Select Map Style, Dynamic Ignition, Show Simulation Result. Also check the `>> nth=` settings-box selectors (User-defined Simulation mode may add number inputs before them).
