@@ -87,7 +87,11 @@ def main() -> None:
             slow_mo=50,
             args=["--start-maximized"],
         )
-        context = browser.new_context(no_viewport=True)
+        ignore_https_errors = _settings.firemap_ignore_https_errors
+        if ignore_https_errors:
+            print("  !  FIREMAP_IGNORE_HTTPS_ERRORS is on: this browser won't verify "
+                  "the site's certificate. Don't log in to anything in it.")
+        context = browser.new_context(no_viewport=True, ignore_https_errors=ignore_https_errors)
         page    = context.new_page()
 
         # Registered before the first load and re-run on every reload, so a
