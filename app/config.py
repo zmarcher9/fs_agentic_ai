@@ -67,12 +67,6 @@ class Settings(BaseSettings):
         return None if value == "" else value
 
     firemap_url: str = Field(default="http://localhost:5173", alias="FIREMAP_URL")
-    # Guide only: let its browser load FIREMAP_URL despite an invalid HTTPS
-    # certificate (e.g. an expired one). That window then can't verify it's
-    # talking to the real site, so keep this off unless a demo needs it.
-    firemap_ignore_https_errors: bool = Field(
-        default=False, alias="FIREMAP_IGNORE_HTTPS_ERRORS"
-    )
 
     @field_validator("cors_origins")
     @classmethod

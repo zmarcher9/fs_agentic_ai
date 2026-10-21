@@ -18,11 +18,6 @@ def test_settings_parse_environment_style_values():
     assert settings.firemap_url == "https://firemap.example"
 
 
-def test_guide_verifies_https_certificates_unless_opted_out():
-    assert Settings(_env_file=None).firemap_ignore_https_errors is False
-    assert Settings(_env_file=None, FIREMAP_IGNORE_HTTPS_ERRORS="true").firemap_ignore_https_errors is True
-
-
 def test_runtime_requires_openrouter_key():
     settings = Settings(_env_file=None, APP_ENV="test", OPENROUTER_API_KEY=None)
 

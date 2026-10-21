@@ -235,7 +235,6 @@ The previous design (tool-calling agent loop on `anthropic/claude-sonnet-4`, no 
 | `LLM_MAX_RETRIES` | No | Provider retries per request; default 2 |
 | `HOST` / `PORT` | No | Bind address for `python main.py`; default `0.0.0.0:8000` |
 | `FIREMAP_URL` | Guide only | FireMapSim page opened by `playwright/guide.py`; default `http://localhost:5173` |
-| `FIREMAP_IGNORE_HTTPS_ERRORS` | Guide only | `true` lets the guide's browser open `FIREMAP_URL` despite an invalid (e.g. expired) HTTPS certificate. That window can't verify the site, so don't log in through it; default `false` |
 | `API_BASE_URL` | Guide/demo | Where `guide.py` / `run_demo.py` reach the API; default `http://localhost:8000` |
 | `CORS_ORIGINS` | No | Comma-separated allowlist; no localhost in production; default `http://localhost:5173,https://firesim.cs.gsu.edu` |
 | `FIRESIM_SESSION_ID` | Demo / guide | Reuse a session issued by this API process. Shell environment only (not read from `.env`); dropped and re-issued on a 401 |
