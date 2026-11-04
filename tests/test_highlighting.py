@@ -185,6 +185,17 @@ def test_sidebar_is_not_injected_into_iframes(page):
     assert frame.locator("#__fsai_sidebar__").count() == 0
 
 
+def test_opening_the_sidebar_does_not_resize_the_page(page):
+    page.goto("data:text/html,<body style='margin:0'><div id='map' style='height:50px'></div></body>")
+    install_sidebar(page, 360, "welcome")
+    width_before = page.evaluate("() => document.getElementById('map').clientWidth")
+
+    page.evaluate("() => window.__fsai_toggle__(true)")
+
+    # Regression: opening used to set margin-right on <html>/<body>, shrinking the map.
+    assert page.evaluate("() => document.getElementById('map').clientWidth") == width_before
+
+
 def test_sidebar_renders_replies_as_text_not_html(page):
     page.goto("data:text/html,<p>FireMapSim</p>")
     install_sidebar(page, 360, "welcome")

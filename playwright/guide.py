@@ -54,7 +54,7 @@ from playwright_guide.sidebar import (
 _settings = get_settings()
 FIRESIM_BASE = _settings.firemap_url
 
-# Sidebar width — main page content is shifted left to make room.
+# Sidebar width — the panel floats over the page; content is not resized.
 SIDEBAR_WIDTH = 360
 
 WELCOME_MESSAGE = (

@@ -23,24 +23,27 @@ SIDEBAR_JS = """(args) => {
     panel.id = '__fsai_sidebar__';
     panel.setAttribute('style', [
         'all: initial',
+        // Floats over the page (no margin push), so the map keeps its size.
         'position: fixed',
-        'top: 0',
-        'right: 0',
-        'bottom: 0',
+        'top: 16px',
+        'right: 16px',
+        'bottom: 16px',
         'width: ' + width + 'px',
-        'height: 100vh',
+        'max-width: calc(100vw - 32px)',
         'z-index: 2147483647',
         'display: flex',
         'flex-direction: column',
         'background: #ffffff',
-        'border-left: 3px solid #ff6600',
-        'box-shadow: -4px 0 24px rgba(0,0,0,0.18)',
+        'border: 1px solid #e5e5e5',
+        'border-top: 3px solid #ff6600',
+        'border-radius: 12px',
+        'box-shadow: 0 8px 32px rgba(0,0,0,0.22)',
         'font-family: -apple-system, Segoe UI, Roboto, sans-serif',
         'font-size: 14px',
         'color: #1a1a1a',
         'overflow: hidden',
         'box-sizing: border-box',
-        'transform: translateX(100%)',
+        'transform: translateX(calc(100% + 32px))',
         'transition: transform 0.25s ease',
         'visibility: hidden',
     ].join(' !important; ') + ' !important');
@@ -143,8 +146,6 @@ SIDEBAR_JS = """(args) => {
         if (!p || !l) return;
         window.__fsai_expanded__ = expand;
         if (expand) {
-            document.documentElement.style.setProperty('margin-right', width + 'px', 'important');
-            document.body.style.setProperty('margin-right', width + 'px', 'important');
             p.style.setProperty('visibility', 'visible', 'important');
             p.style.setProperty('transform', 'translateX(0)', 'important');
             l.style.setProperty('display', 'none', 'important');
@@ -152,13 +153,10 @@ SIDEBAR_JS = """(args) => {
             const inp = document.getElementById('__fsai_input__');
             if (inp) inp.focus();
         } else {
-            document.documentElement.style.setProperty('margin-right', '0px', 'important');
-            document.body.style.setProperty('margin-right', '0px', 'important');
-            p.style.setProperty('transform', 'translateX(100%)', 'important');
+            p.style.setProperty('transform', 'translateX(calc(100% + 32px))', 'important');
             p.style.setProperty('visibility', 'hidden', 'important');
             l.style.setProperty('display', 'flex', 'important');
         }
-        window.dispatchEvent(new Event('resize'));
     };
 
     // ---- chat transcript + input wiring ----------------------
