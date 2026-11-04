@@ -7,17 +7,22 @@ Routes:
   POST /api/session       — issue unguessable X-Session-Id (throttled per IP)
   POST /chat              — auth via X-Session-Id; { message } → { reply, highlight }
   GET  /health            — sanity check
+  GET  /widget/firesim-helper.js — embeddable sidebar + highlighting for FireMapSim
 
 Run locally:
   uvicorn api.main:app --reload --port 8000
 """
 
+import json
 import logging
 from contextlib import asynccontextmanager
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app import __version__
@@ -29,6 +34,10 @@ from app.core.rate_limiter import (
     session_issue_limiter,
 )
 from app.core.session_tokens import issue_session_token, is_valid_session
+from app.ui_selectors import STEP_SELECTORS
+
+WIDGET_PATH = Path(__file__).resolve().parent.parent / "widget" / "firesim-helper.js"
+WIDGET_SELECTORS_PLACEHOLDER = "/*__FSAI_SELECTORS__*/{}"
 
 # A real question is a sentence or two; this leaves plenty of room while
 # stopping someone from pasting a novel into every (billed) turn.
@@ -112,6 +121,29 @@ def require_session_id(x_session_id: Optional[str] = Header(default=None)) -> st
 async def health():
     """Liveness check for the API process."""
     return HealthResponse(status="ready", version=app.version)
+
+
+@lru_cache
+def _widget_source() -> str:
+    source = WIDGET_PATH.read_text(encoding="utf-8")
+    if WIDGET_SELECTORS_PLACEHOLDER not in source:
+        raise RuntimeError(f"{WIDGET_PATH.name} is missing {WIDGET_SELECTORS_PLACEHOLDER}")
+    return source.replace(WIDGET_SELECTORS_PLACEHOLDER, json.dumps(STEP_SELECTORS))
+
+
+@app.get("/widget/firesim-helper.js", tags=["widget"], include_in_schema=False)
+async def widget_script():
+    """
+    The FireMapSim sidebar + highlighting widget, with the selector map from
+    app/ui_selectors.py filled in. FireMapSim loads it with one script tag;
+    it then calls /api/session and /chat from the page (CORS_ORIGINS).
+    """
+    return Response(
+        content=_widget_source(),
+        media_type="application/javascript; charset=utf-8",
+        # Short, so a selector fix reaches open pages without a hard refresh.
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @app.post("/api/session", response_model=SessionResponse, tags=["auth"])

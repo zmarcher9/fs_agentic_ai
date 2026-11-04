@@ -10,8 +10,8 @@ import re
 
 # The agent sees every entry in its (cached) system prompt and returns the
 # keys of the controls its answer is about. Keys that name a single on-page
-# control use the same names as playwright_guide/highlighting.py's
-# STEP_SELECTORS (tests/test_ui_steps.py guards this). Every entry is written
+# control use the same names as app/ui_selectors.py's STEP_SELECTORS
+# (tests/test_ui_steps.py guards this). Every entry is written
 # for the user to perform themselves — the agent never operates the page.
 # Each entry opens with its own control's label so the guide's text-based
 # fallback (used only with a server that sends no `highlight` list) lands on

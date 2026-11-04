@@ -1,11 +1,8 @@
 """Tests for the live guide's highlighting and sidebar (playwright_guide/).
 
-Browser tests run headless Chromium against a fixture page laid out like
-FireMapSim's control bar; they skip if Chromium isn't installed
-(`python -m playwright install chromium`).
+Browser tests run headless Chromium (tests/conftest.py) against a fixture
+page laid out like FireMapSim's control bar.
 """
-
-import os
 
 import pytest
 
@@ -62,29 +59,6 @@ FIXTURE_PAGE = """
 <div class="group"><span>Wind Degree:</span><input class="form-control" type="number" id="wd"></div>
 <button>Close Project</button>
 """
-
-
-@pytest.fixture(scope="module")
-def browser():
-    sync_api = pytest.importorskip("playwright.sync_api")
-    with sync_api.sync_playwright() as pw:
-        try:
-            chromium = pw.chromium.launch()
-        except Exception as exc:  # browser binaries not installed
-            # CI installs Chromium; a broken install step must fail, not
-            # silently skip every browser test.
-            if os.environ.get("CI"):
-                raise
-            pytest.skip(f"Chromium unavailable: {exc}")
-        yield chromium
-        chromium.close()
-
-
-@pytest.fixture
-def page(browser):
-    page = browser.new_page()
-    yield page
-    page.close()
 
 
 @pytest.mark.parametrize(

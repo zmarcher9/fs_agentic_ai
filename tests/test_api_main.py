@@ -55,6 +55,16 @@ async def test_health_is_ready_without_any_browser(client):
 
 
 @pytest.mark.asyncio
+async def test_widget_script_is_served_with_the_selector_map(client):
+    response = await client.get("/widget/firesim-helper.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/javascript")
+    assert "__FSAI_SELECTORS__" not in response.text
+    assert '"wind_degree": "input.form-control' in response.text
+
+
+@pytest.mark.asyncio
 async def test_chat_round_trip_awaits_async_agent(client, monkeypatch):
     calls = []
 

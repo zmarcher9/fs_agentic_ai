@@ -9,41 +9,14 @@ document.querySelector, which rejects the extensions.
 
 from playwright.sync_api import Page
 
+from app.ui_selectors import STEP_SELECTORS  # noqa: F401 — re-exported for the guide and tests
+
 HIGHLIGHT_CSS = """
   outline: 4px solid #ff6600 !important;
   outline-offset: 3px !important;
   background-color: rgba(255, 102, 0, 0.12) !important;
   transition: all 0.3s ease;
 """
-
-STEP_SELECTORS: dict[str, str] = {
-    "cell_resolution":      "select#cellResolution",
-    "cell_dimension":       "select#cellSpaceDimension",
-    "selected_area":        "span#selectedSquareArea",
-    "set_project_location": "label[for='sPL']",
-    "go_project_location":  "label[for='gPL']",
-    "set_line_ignition":    "label[for='btnradio1']",
-    "set_point_ignition":   "label[for='btnradio1-1']",
-    "set_fuel_brake":       "label[for='btnradio2']",
-    "get_terrain_fuel":     "label[for='getFuel']",
-    "show_fuel":            "label[for='drawFuel']",
-    "show_slope":           "label[for='drawSlope']",
-    "show_aspect":          "label[for='drawAspect']",
-    # The three settings boxes in page order (Duration, Wind Speed, Wind
-    # Degree). `nth=` counts matches across the whole page; CSS
-    # :nth-of-type counted siblings and broke when each box has its own
-    # wrapper. Not yet checked against the live DOM.
-    "simulation_duration":  "input.form-control[type='number'] >> nth=0",
-    "wind_speed":           "input.form-control[type='number'] >> nth=1",
-    "wind_degree":          "input.form-control[type='number'] >> nth=2",
-    "start_simulation":     "label[for='startRun']",
-    "reset_simulation":     "label[for='btnradio10']",
-    "close_project":        "button:has-text('Close Project')",
-    "load_sample":          "label[for='loadSample']",
-    "save_project":         "label[for='saveProject']",
-    "download_project":     "label[for='downloadProject']",
-    "upload_project":       "label[for='uploadProject']",
-}
 
 # Phrase → step key. detect_step picks the phrase that appears EARLIEST in
 # the reply (longest phrase on ties), so list order doesn't matter.

@@ -117,17 +117,20 @@ fs_agentic_ai/
 │   │   ├── agent.py         # run_agent() → TurnResult: one cached, structured OpenRouter call
 │   │   ├── prompts.py       # FIRESIM_SYSTEM_PROMPT + build_system_prompt() (adds the step reference)
 │   │   └── ui_steps.py      # UI_STEPS — per-control instructions (34 controls), resolve_step()
+│   ├── ui_selectors.py      # STEP_SELECTORS — where each control is on the page (guide + widget)
 │   ├── core/
 │   │   ├── rate_limiter.py  # chat turn limiter + LLM token budget
 │   │   ├── sanitize.py      # unused — reserved for a future doc-grounded tool
 │   │   ├── text_format.py   # strip_markdown() — plain-text replies (agent + guide)
 │   │   └── session_tokens.py
 │   └── config.py
+├── widget/
+│   └── firesim-helper.js     # Embeddable sidebar + highlighting for the real FireMapSim frontend
 ├── playwright/
 │   └── guide.py              # Local live guide: sidebar + highlighting
 ├── playwright_guide/         # Support modules for guide.py
 │   ├── api_client.py         # get_session_id(), chat()
-│   ├── highlighting.py       # STEP_SELECTORS, pick_highlight(), highlight_on/off()
+│   ├── highlighting.py       # pick_highlight(), highlight_on/off()
 │   └── sidebar.py            # install_sidebar() + chat sidebar JS
 ├── demo/
 │   └── run_demo.py           # Scripted Q&A walkthrough against /chat
@@ -153,10 +156,41 @@ model uses `[]` when the reply doesn't point at a control. Only if the
 response has no `highlight` field at all (an older server) does the guide
 fall back to `detect_step()`, which finds the control name ("Wind Degree",
 "Set Line Ignition", …) mentioned *earliest* in the reply. `ui_steps.UI_STEPS`
-and `highlighting.STEP_SELECTORS` use the same key names for the same
+and `app/ui_selectors.STEP_SELECTORS` use the same key names for the same
 controls; `tests/test_ui_steps.py` guards against them drifting apart.
 Selectors are Playwright selectors resolved via `page.locator`. The sidebar
 is installed as an init script, so it survives page reloads.
+
+## Embedding the helper in FireMapSim
+
+When it's time to ship the helper inside the real frontend (no Playwright),
+add one line to FireMapSim's `index.html`, pointing at wherever the API is
+deployed:
+
+```html
+<script src="https://API_HOST/widget/firesim-helper.js" defer></script>
+```
+
+The API serves `widget/firesim-helper.js` with `STEP_SELECTORS` filled in,
+so a selector fix on the server reaches the page (cached 5 minutes). The
+widget is the same floating sidebar and highlighting as the guide, but it
+calls `/api/session` and `/chat` straight from the page:
+
+- **API URL** — defaults to the origin the script was loaded from; override
+  with `data-api="https://..."` on the tag (e.g. when vendoring the file).
+- **CORS** — FireMapSim's origin must be in `CORS_ORIGINS`.
+- **Isolation** — the panel lives in a shadow root, so FireMapSim's CSS and
+  the panel's CSS don't touch; keystrokes in the chat box don't reach the
+  page's keyboard shortcuts. Replies are inserted as text, never HTML.
+- **Per tab** — the session id and last 50 messages are kept in
+  `sessionStorage`, so a reload keeps the conversation; a new tab starts fresh.
+  On a 401 it mints a new session and retries once.
+- **Hooks** — `window.__fsaiHelper.open()`, `.close()`, `.highlight([keys])`,
+  `.clearHighlight()` for the frontend to call if it wants to.
+- Selectors use only CSS plus Playwright's `>> nth=N` and `:has-text('...')`,
+  which the widget resolves itself. A new selector using other Playwright
+  syntax needs the widget's `resolve()` taught it (`tests/test_widget.py`
+  checks the widget and Playwright agree).
 
 ## Where the UI knowledge comes from
 
@@ -180,6 +214,7 @@ under Work remaining.
 | `GET /health` | Done | Liveness only — no browser to wait on |
 | CORS | Done | From `CORS_ORIGINS`; production rejects localhost origins; no credentials (auth is a header) |
 | Live guide | Done | Sidebar (survives reloads, top frame only, 2,000-char input) + highlighting from `/chat`'s `highlight` list; re-issues a session on 401; never pans or edits the page |
+| Embeddable widget | Done | `GET /widget/firesim-helper.js` — one-line embed for the real frontend; same sidebar + highlighting, shadow-DOM isolated, session + transcript per tab. Not yet tried inside the real FireMapSim build |
 
 ### Tests
 
@@ -189,7 +224,8 @@ under Work remaining.
 | `tests/test_ui_steps.py` | `resolve_step` and label aliases; step reference in the prompt and byte-stable; `UI_STEPS` ↔ `STEP_SELECTORS` alignment; each step's text highlights its own control; Wind Degree stated as blows-from everywhere |
 | `tests/test_api_main.py` | `/health`, `/api/session`, `/chat` round trips; budget stops LLM calls (incl. failed billed turns and concurrent requests); 400/401/422/429/500 paths; session throttle; plain-text replies |
 | `tests/test_agent.py` | Scripted model: one call per question, cache breakpoint on the system prompt, OpenRouter structured-output wiring (no tools), history window, cache-weighted tokens, highlight validation, empty-answer guard, provider error / cancellation recorded and session left usable, pruning |
-| `tests/test_highlighting.py` | `detect_step`/`pick_highlight`; headless-Chromium highlight on/off (incl. after a re-render), selector validity, sidebar reload + round trip, iframe guard (skips without Chromium locally; fails in CI) |
+| `tests/test_highlighting.py` | `detect_step`/`pick_highlight`; headless-Chromium highlight on/off (incl. after a re-render), selector validity, sidebar reload + round trip, floating (no page resize), iframe guard (skips without Chromium locally; fails in CI) |
+| `tests/test_widget.py` | The embeddable widget in headless Chromium: one-line embed, chat round trip + highlight, widget and Playwright resolve selectors alike, 401 re-mint, 429/500 messages, text-not-HTML, reload keeps transcript + session, double load, keystrokes don't leak to the page |
 | `tests/test_guide_display.py` | `strip_markdown` / `clean_for_display`, incl. a speed check |
 | `tests/test_clients.py` | `demo/run_demo.py` and `playwright/guide.py` import from any directory; `api_client` 401 re-mint + retry |
 | `tests/test_config.py` / `test_rate_limiter.py` / `test_sanitize.py` / `test_session_tokens.py` | Settings validation and core utilities |
@@ -203,6 +239,7 @@ under Work remaining.
 - [ ] Confirm selectors on the live page and add `STEP_SELECTORS` for the steps in `_NO_SELECTOR_STEPS` (`tests/test_ui_steps.py`), e.g. Show Cell Info, Select Map Style, Dynamic Ignition, Show Simulation Result. Also check the `>> nth=` settings-box selectors (User-defined Simulation mode may add number inputs before them).
 - [ ] More of Dr. Hu's material: if it's short-form, fold it into `UI_STEPS` / the prompt as was done for the project report. Only build a file-backed `answer_domain_question` tool (reading `docs/knowledge/`) if the material is genuinely long-form. A file-backed tool must take a free-text query resolved against its own fixed file list (never an LLM-supplied path), cap per-file size, accept plain text/markdown only, and come with doc-content-injection cases in `tests/test_adversarial_agent.py`.
 - [ ] Confirm with Dr. Hu whether recommending specific simulation parameter values is in scope (currently: no — the helper explains settings, ranges, and trade-offs only).
+- [ ] Add the widget's script tag to the real FireMapSim frontend and check it there (selectors, CORS origin, any CSP that blocks a script from the API host).
 - [ ] Streaming `POST /chat/stream`.
 - [ ] Slim the container image now that the server runs no Chromium (see Known issues).
 
